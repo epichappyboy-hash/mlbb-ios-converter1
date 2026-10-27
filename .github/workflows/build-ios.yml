@@ -68,6 +68,25 @@ jobs:
               document_type["LSItemContentTypes"] = ["public.zip-archive", "com.codex.unity3d"]
           path.write_bytes(plistlib.dumps(data))
           PY
+      - name: Reduce conversion memory on iPhone
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          converter = Path("app/converter_bridge.py")
+          source = converter.read_text()
+          old_options = "ConvertOptions(create_zip=True, full_validation=True, strict_matching=True, preserve_shadows=True)"
+          new_options = "ConvertOptions(create_zip=True, full_validation=False, strict_matching=True, preserve_shadows=True)"
+          if old_options not in source:
+              raise SystemExit("Could not find the iOS conversion options")
+          source = source.replace(old_options, new_options, 1)
+          converter.write_text(source)
+          converter_module = Path("app/mlbb_ios_converter.py")
+          module_source = converter_module.read_text()
+          if "compresslevel=9" not in module_source:
+              raise SystemExit("Could not find the output ZIP compression setting")
+          converter_module.write_text(module_source.replace("compresslevel=9", "compresslevel=1", 1))
+          PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
