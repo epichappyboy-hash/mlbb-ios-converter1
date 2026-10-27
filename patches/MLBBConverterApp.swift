@@ -74,14 +74,6 @@ struct ConverterView: View {
             .padding(24)
             .navigationTitle("Converter")
             .navigationBarTitleDisplayMode(.inline)
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.zip, UTType(filenameExtension: "unity3d") ?? .data], allowsMultipleSelection: false) { result in
-                do {
-                    guard let selected = try result.get().first else { return }
-                    importFile(selected)
-                } catch {
-                    errorMessage = error.localizedDescription
-                }
-            }
             .alert("Hindi natuloy", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: {
@@ -90,6 +82,11 @@ struct ConverterView: View {
         }
         .onOpenURL { url in
             importFile(url)
+        }
+        .sheet(isPresented: $showImporter) {
+            AssetDocumentPicker { selected in
+                importFile(selected)
+            }
         }
     }
 
@@ -104,8 +101,6 @@ struct ConverterView: View {
         errorMessage = nil
         let destinationDirectory = documents.appendingPathComponent("Imported", isDirectory: true)
 
-        // Files and other providers can give the app a security-scoped URL whose
-        // contents must be coordinated before they are copied into our container.
         DispatchQueue.global(qos: .userInitiated).async {
             let scoped = selected.startAccessingSecurityScopedResource()
             defer { if scoped { selected.stopAccessingSecurityScopedResource() } }
@@ -119,14 +114,18 @@ struct ConverterView: View {
                 do {
                     try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
                     let destination = destinationDirectory.appendingPathComponent(UUID().uuidString + "_" + selected.lastPathComponent)
-                    try FileManager.default.copyItem(at: readableURL, to: destination)
+                    do {
+                        try FileManager.default.copyItem(at: readableURL, to: destination)
+                    } catch {
+                        try FileManager.default.copyItem(at: selected, to: destination)
+                    }
                     importedURL = destination
                 } catch {
                     copyError = error
                 }
             }
 
-            let failure: Error? = coordinationError ?? copyError
+            let failure = coordinationError ?? copyError
             DispatchQueue.main.async {
                 if let failure {
                     status = "Hindi na-import ang file."
@@ -175,4 +174,35 @@ struct ActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+private struct AssetDocumentPicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let unityBundle = UTType(filenameExtension: "unity3d") ?? .data
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.zip, unityBundle], asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onPick: (URL) -> Void
+
+        init(onPick: @escaping (URL) -> Void) {
+            self.onPick = onPick
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else { return }
+            onPick(url)
+        }
+    }
 }
