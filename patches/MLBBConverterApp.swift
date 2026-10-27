@@ -100,7 +100,7 @@ struct ConverterView: View {
             return
         }
 
-        status = "Ini-import ang (selected.lastPathComponent)…"
+        status = "Ini-import ang " + selected.lastPathComponent + "…"
         errorMessage = nil
         let destinationDirectory = documents.appendingPathComponent("Imported", isDirectory: true)
 
@@ -130,7 +130,7 @@ struct ConverterView: View {
             DispatchQueue.main.async {
                 if let failure {
                     status = "Hindi na-import ang file."
-                    errorMessage = "Hindi mabasa ang file mula sa Files. (failure.localizedDescription)"
+                    errorMessage = "Hindi mabasa ang file mula sa Files. " + failure.localizedDescription
                     return
                 }
                 guard let importedURL else {
@@ -140,7 +140,7 @@ struct ConverterView: View {
                 }
                 inputURL = importedURL
                 outputURL = nil
-                status = "Handa nang i-convert: (selected.lastPathComponent)"
+                status = "Handa nang i-convert: " + selected.lastPathComponent
             }
         }
     }
