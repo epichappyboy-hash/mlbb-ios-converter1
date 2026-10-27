@@ -49,6 +49,55 @@ jobs:
               "let jsonText = try raw.as(String.self)",
               "let jsonText = String(raw) ?? raw.description",
           )
+          source = source.replace(
+              "                try self.initializeRuntime()",
+              "                self.recordDiagnostic(\"SWIFT: Python runtime initialization started\", outputDirectory: outputDirectory)\n                try self.initializeRuntime()\n                self.recordDiagnostic(\"SWIFT: Python runtime initialized\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "                let sys = Python.import(\"sys\")",
+              "                self.recordDiagnostic(\"SWIFT: importing Python sys module\", outputDirectory: outputDirectory)\n                let sys = Python.import(\"sys\")",
+              1,
+          )
+          source = source.replace(
+              "                let bridge = Python.import(\"converter_bridge\")",
+              "                self.recordDiagnostic(\"SWIFT: importing converter bridge and Unity dependencies\", outputDirectory: outputDirectory)\n                let bridge = Python.import(\"converter_bridge\")\n                self.recordDiagnostic(\"SWIFT: converter bridge imported\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "                let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [",
+              "                self.recordDiagnostic(\"SWIFT: calling Python conversion function\", outputDirectory: outputDirectory)\n                let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [",
+              1,
+          )
+          source = source.replace(
+              "                let jsonText = String(raw) ?? raw.description",
+              "                self.recordDiagnostic(\"SWIFT: Python conversion returned\", outputDirectory: outputDirectory)\n                let jsonText = String(raw) ?? raw.description",
+              1,
+          )
+          source = source.replace(
+              "                completion(.failure(error))",
+              "                self.recordDiagnostic(\"SWIFT: conversion failed: \\(error.localizedDescription)\", outputDirectory: outputDirectory)\n                completion(.failure(error))",
+              1,
+          )
+          recorder = '''
+              private func recordDiagnostic(_ message: String, outputDirectory: URL) {
+                  let file = outputDirectory.appendingPathComponent("conversion_diagnostics.log")
+                  let line = "\\(ISO8601DateFormatter().string(from: Date())) \\(message)\\n"
+                  guard let data = line.data(using: .utf8) else { return }
+                  if let handle = try? FileHandle(forWritingTo: file) {
+                      try? handle.seekToEnd()
+                      try? handle.write(contentsOf: data)
+                      try? handle.close()
+                  } else {
+                      try? data.write(to: file, options: .atomic)
+                  }
+              }
+
+          '''
+          if "private func recordDiagnostic(_ message: String, outputDirectory: URL)" not in source:
+              source = source.replace("    private func initializeRuntime() throws {", recorder + "    private func initializeRuntime() throws {")
+          if source.count("recordDiagnostic(") < 7:
+              raise SystemExit("Could not add iOS-to-Python diagnostic checkpoints")
           if "dynamicallyCall(withArguments:" not in source or "raw.as(String.self)" in source:
               raise SystemExit("Could not patch PythonKit calls")
           path.write_text(source)
