@@ -55,6 +55,11 @@ jobs:
               1,
           )
           source = source.replace(
+              "                try self.initializeRuntime()",
+              "                try self.initializeRuntime(outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
               "        PythonLibrary.useVersion(3, 14)",
               "        self.recordDiagnostic(\"SWIFT: selecting embedded Python 3.14\", outputDirectory: outputDirectory)\n        PythonLibrary.useVersion(3, 14)\n        self.recordDiagnostic(\"SWIFT: Python 3.14 selected\", outputDirectory: outputDirectory)",
               1,
@@ -110,12 +115,14 @@ jobs:
 
           '''
           if "private func recordDiagnostic(_ message: String, outputDirectory: URL)" not in source:
-              source = source.replace("    private func initializeRuntime() throws {", recorder + "    private func initializeRuntime() throws {")
+              source = source.replace("    private func initializeRuntime() throws {", recorder + "    private func initializeRuntime(outputDirectory: URL) throws {")
           if source.count("recordDiagnostic(") < 7:
               raise SystemExit("Could not add iOS-to-Python diagnostic checkpoints")
           for checkpoint in ("Python 3.14 selected", "embedded Python framework loaded", "Python sys import completed"):
               if checkpoint not in source:
                   raise SystemExit(f"Could not add Python runtime checkpoint: {checkpoint}")
+          if "initializeRuntime(outputDirectory: outputDirectory)" not in source or "initializeRuntime(outputDirectory: URL)" not in source:
+              raise SystemExit("Could not pass the diagnostics path into Python runtime setup")
           if "dynamicallyCall(withArguments:" not in source or "raw.as(String.self)" in source:
               raise SystemExit("Could not patch PythonKit calls")
           path.write_text(source)
