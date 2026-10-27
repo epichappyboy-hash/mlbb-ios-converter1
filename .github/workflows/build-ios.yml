@@ -90,8 +90,8 @@ jobs:
               1,
           )
           source = source.replace(
-              "                let bridge = Python.import(\"converter_bridge\")",
-              "                self.recordDiagnostic(\"SWIFT: importing converter bridge and Unity dependencies\", outputDirectory: outputDirectory)\n                let bridge = Python.import(\"converter_bridge\")\n                self.recordDiagnostic(\"SWIFT: converter bridge imported\", outputDirectory: outputDirectory)",
+              "                let bridge = Python.import(\\\"converter_bridge\\\")",
+              "                let bridgePath = appRoot.appendingPathComponent(\\\"app/converter_bridge.py\\\").path\\n                let appPackagesPath = appRoot.appendingPathComponent(\\\"app_packages\\\", isDirectory: true).path\\n                self.recordDiagnostic(\\\"SWIFT: bridge file exists=\\\\(FileManager.default.fileExists(atPath: bridgePath)); path=\\\\(bridgePath)\\\", outputDirectory: outputDirectory)\\n                self.recordDiagnostic(\\\"SWIFT: app_packages exists=\\\\(FileManager.default.fileExists(atPath: appPackagesPath)); path=\\\\(appPackagesPath)\\\", outputDirectory: outputDirectory)\\n                self.recordDiagnostic(\\\"SWIFT: importing converter bridge and Unity dependencies\\\", outputDirectory: outputDirectory)\\n                let bridge = Python.import(\\\"converter_bridge\\\")\\n                self.recordDiagnostic(\\\"SWIFT: converter bridge imported\\\", outputDirectory: outputDirectory)",
               1,
           )
           source = source.replace(
