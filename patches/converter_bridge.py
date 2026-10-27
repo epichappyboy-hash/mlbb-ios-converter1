@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-import io
-import json
-import os
-import shutil
-import traceback
-import zipfile
-from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime
-from pathlib import Path
-
 
 def _diagnostic(output_path: str | Path, message: str) -> None:
     """Write checkpoints immediately so iOS crashes can be localized."""
+    import os
+    from datetime import datetime
+    from pathlib import Path
     try:
         parent = Path(output_path)
         parent.mkdir(parents=True, exist_ok=True)
@@ -25,6 +18,9 @@ def _diagnostic(output_path: str | Path, message: str) -> None:
 
 
 def _ensure_user_shader_folder() -> Path:
+    import os
+    import shutil
+    from pathlib import Path
     home = Path(os.path.expanduser("~"))
     target = home / "Documents" / "MLBB Converter" / "Shaders"
     target.mkdir(parents=True, exist_ok=True)
@@ -58,6 +54,7 @@ def _unique_zip(parent: Path, stem: str) -> Path:
 
 
 def _webdav_cache_root(path: Path) -> Path | None:
+    from pathlib import Path
     resolved = path.resolve()
     lowered = [part.lower() for part in resolved.parts]
     try:
@@ -70,6 +67,15 @@ def _webdav_cache_root(path: Path) -> Path | None:
 
 
 def run_conversion(input_path: str, shader_path: str, output_path: str, display_name: str) -> str:
+    # Keep module import lightweight; load the standard-library stack only when conversion starts.
+    import io
+    import json
+    import os
+    import shutil
+    import traceback
+    import zipfile
+    from contextlib import redirect_stderr, redirect_stdout
+    from pathlib import Path
     logs, capture = [], io.StringIO()
     output_dir = output_zip = None
     try:
