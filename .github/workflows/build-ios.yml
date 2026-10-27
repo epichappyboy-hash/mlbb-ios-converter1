@@ -17,7 +17,7 @@ jobs:
       - name: Generate Xcode project
         working-directory: reconstructed/MLBB_iOS_Converter
         run: python3 scripts/generate_project.py && xcodegen generate
-      - name: Fix PythonKit throwing invocation
+      - name: Fix PythonKit throwing and string conversion
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
           python3 - <<'PY'
@@ -32,8 +32,12 @@ jobs:
               "input.lastPathComponent\n                )",
               "input.lastPathComponent\n                ])",
           )
-          if "dynamicallyCall(withArguments:" not in source:
-              raise SystemExit("Could not patch PythonKit call")
+          source = source.replace(
+              "let jsonText = try raw.as(String.self)",
+              "let jsonText = String(raw) ?? raw.description",
+          )
+          if "dynamicallyCall(withArguments:" not in source or "raw.as(String.self)" in source:
+              raise SystemExit("Could not patch PythonKit calls")
           path.write_text(source)
           PY
       - name: Build unsigned iPhone app
