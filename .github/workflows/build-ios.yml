@@ -63,7 +63,9 @@ jobs:
           path = Path("Sources/Info.plist")
           data = plistlib.loads(path.read_bytes())
           for document_type in data.get("CFBundleDocumentTypes", []):
-              document_type["CFBundleTypeRole"] = "Viewer"
+              document_type["CFBundleTypeRole"] = "Editor"
+              document_type["LSHandlerRank"] = "Alternate"
+              document_type["LSItemContentTypes"] = ["public.zip-archive", "com.codex.unity3d"]
           path.write_bytes(plistlib.dumps(data))
           PY
       - name: Build unsigned iPhone app
@@ -80,4 +82,3 @@ jobs:
           name: MLBB_iOS_Converter_unsigned
           path: reconstructed/MLBB_iOS_Converter/MLBB_iOS_Converter.ipa
           if-no-files-found: error
-
