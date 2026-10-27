@@ -55,7 +55,17 @@ jobs:
           PY
       - name: Add direct Files import handling
         working-directory: reconstructed/MLBB_iOS_Converter
-        run: cp ../../patches/MLBBConverterApp.swift Sources/MLBBConverterApp.swift
+        run: |
+          cp ../../patches/MLBBConverterApp.swift Sources/MLBBConverterApp.swift
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          path = Path("Sources/Info.plist")
+          data = plistlib.loads(path.read_bytes())
+          for document_type in data.get("CFBundleDocumentTypes", []):
+              document_type["CFBundleTypeRole"] = "Viewer"
+          path.write_bytes(plistlib.dumps(data))
+          PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
