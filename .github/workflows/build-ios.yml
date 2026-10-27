@@ -1,110 +1,242 @@
-
-      - name: Combine Swift diagnostics and Python import tracing
+name: Build standalone MLBB iOS Converter
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble project archive
+        run: |
+          cat MLBB_iOS_Converter_Project.zip.part* > MLBB_iOS_Converter_Project.zip
+          unzip -q MLBB_iOS_Converter_Project.zip -d reconstructed
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project and configure Python extensions
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 scripts/generate_project.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("project.yml")
+          lines = path.read_text().splitlines()
+          output = []
+          for line in lines:
+              output.append(line)
+              if line.startswith("      - framework: Frameworks/") and not line.endswith("Python.framework"):
+                  output.append("        link: false")
+          path.write_text("\n".join(output) + "\n")
+          PY
+          xcodegen generate
+      - name: Fix PythonKit throwing and string conversion
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
           python3 - <<'PY'
-          import ast
           from pathlib import Path
-
-          # 1. Configure Swift to pass the diagnostics file path to Python.
-          swift_path = Path("Sources/PythonConverter.swift")
-          swift = swift_path.read_text()
-
-          env_line = 'setenv("PYTHONNOUSERSITE", "1", 1)'
-          diagnostic_env = (
-              'setenv("MLBB_CONVERTER_DIAGNOSTICS", '
-              'outputDirectory.appendingPathComponent("conversion_diagnostics.log").path, 1)'
+          path = Path("Sources/PythonConverter.swift")
+          source = path.read_text()
+          source = source.replace(
+              "bridge.run_conversion.throwing(",
+              "bridge.run_conversion.throwing.dynamicallyCall(withArguments: [",
           )
+          source = source.replace(
+              "input.lastPathComponent\n                )",
+              "input.lastPathComponent\n                ])",
+          )
+          source = source.replace(
+              "let jsonText = try raw.as(String.self)",
+              "let jsonText = String(raw) ?? raw.description",
+          )
+          source = source.replace(
+              "                try self.initializeRuntime()",
+              "                self.recordDiagnostic(\"SWIFT: Python runtime initialization started\", outputDirectory: outputDirectory)\n                try self.initializeRuntime()\n                self.recordDiagnostic(\"SWIFT: Python runtime initialized\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "                try self.initializeRuntime()",
+              "                try self.initializeRuntime(outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "        PythonLibrary.useVersion(3, 14)",
+              "        self.recordDiagnostic(\"SWIFT: selecting embedded Python 3.14\", outputDirectory: outputDirectory)\n        PythonLibrary.useVersion(3, 14)\n        self.recordDiagnostic(\"SWIFT: Python 3.14 selected\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "        let pythonLibrary = appRoot.appendingPathComponent(\"Frameworks/Python.framework/Python\").path",
+              "        let pythonLibrary = appRoot.appendingPathComponent(\"Frameworks/Python.framework/Python\").path\n        guard FileManager.default.fileExists(atPath: pythonLibrary) else {\n            throw ConverterError.conversionFailed(\"Nawawala ang embedded Python framework: \\(pythonLibrary)\")\n        }\n        guard FileManager.default.fileExists(atPath: pythonRoot.appendingPathComponent(\"lib/python3.14\", isDirectory: true).path) else {\n            throw ConverterError.conversionFailed(\"Nawawala ang Python 3.14 standard library sa app bundle.\")\n        }\n        if dlopen(pythonLibrary, RTLD_LAZY | RTLD_GLOBAL) == nil {\n            let reason = dlerror().map { String(cString: $0) } ?? \"unknown dynamic-loader error\"\n            self.recordDiagnostic(\"SWIFT: Python framework load failed: \\(reason)\", outputDirectory: outputDirectory)\n            throw ConverterError.conversionFailed(\"Hindi ma-load ang embedded Python framework: \\(reason)\")\n        }\n        self.recordDiagnostic(\"SWIFT: Python framework and standard library files exist\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "        setenv(\"PYTHONPATH\", \"\\(appRoot.appendingPathComponent(\"app\").path):\\(appRoot.appendingPathComponent(\"app_packages\").path)\", 1)",
+              "        let standardLibrary = pythonRoot.appendingPathComponent(\"lib/python3.14\").path\n        let dynamicModules = standardLibrary + \"/lib-dynload\"\n        let applicationPath = appRoot.appendingPathComponent(\"app\").path\n        let packagesPath = appRoot.appendingPathComponent(\"app_packages\").path\n        setenv(\"PYTHONPATH\", [standardLibrary, dynamicModules, applicationPath, packagesPath].joined(separator: \":\"), 1)\n        setenv(\"PYTHONUTF8\", \"1\", 1)\n        setenv(\"PYTHONUNBUFFERED\", \"1\", 1)\n        setenv(\"PYTHONDONTWRITEBYTECODE\", \"1\", 1)\n        setenv(\"PYTHONNOUSERSITE\", \"1\", 1)",
+              1,
+          )
+          source = source.replace(
+              "        PythonLibrary.useLibrary(at: pythonLibrary)",
+              "        self.recordDiagnostic(\"SWIFT: loading embedded Python framework\", outputDirectory: outputDirectory)\n        PythonLibrary.useLibrary(at: pythonLibrary)\n        self.recordDiagnostic(\"SWIFT: embedded Python framework loaded\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "        _ = Python.import(\"sys\")",
+              "        self.recordDiagnostic(\"SWIFT: initializing Python interpreter by importing sys\", outputDirectory: outputDirectory)\n        _ = Python.import(\"sys\")\n        self.recordDiagnostic(\"SWIFT: Python sys import completed\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "                let sys = Python.import(\"sys\")",
+              "                self.recordDiagnostic(\"SWIFT: importing Python sys module\", outputDirectory: outputDirectory)\n                let sys = Python.import(\"sys\")",
+              1,
+          )
+          source = source.replace(
+              "                let bridge = Python.import(\"converter_bridge\")",
+              "                self.recordDiagnostic(\"SWIFT: importing converter bridge and Unity dependencies\", outputDirectory: outputDirectory)\n                let bridge = Python.import(\"converter_bridge\")\n                self.recordDiagnostic(\"SWIFT: converter bridge imported\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "                let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [",
+              "                self.recordDiagnostic(\"SWIFT: calling Python conversion function\", outputDirectory: outputDirectory)\n                let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [",
+              1,
+          )
+          source = source.replace(
+              "                let jsonText = String(raw) ?? raw.description",
+              "                self.recordDiagnostic(\"SWIFT: Python conversion returned\", outputDirectory: outputDirectory)\n                let jsonText = String(raw) ?? raw.description",
+              1,
+          )
+          source = source.replace(
+              "                completion(.failure(error))",
+              "                self.recordDiagnostic(\"SWIFT: conversion failed: \\(error.localizedDescription)\", outputDirectory: outputDirectory)\n                completion(.failure(error))",
+              1,
+          )
+          recorder = '''
+              private func recordDiagnostic(_ message: String, outputDirectory: URL) {
+                  let file = outputDirectory.appendingPathComponent("conversion_diagnostics.log")
+                  let line = "\\(ISO8601DateFormatter().string(from: Date())) \\(message)\\n"
+                  guard let data = line.data(using: .utf8) else { return }
+                  if let handle = try? FileHandle(forWritingTo: file) {
+                      try? handle.seekToEnd()
+                      try? handle.write(contentsOf: data)
+                      try? handle.close()
+                  } else {
+                      try? data.write(to: file, options: .atomic)
+                  }
+              }
 
-          if "MLBB_CONVERTER_DIAGNOSTICS" not in swift:
-              if env_line not in swift:
-                  raise SystemExit(
-                      "ERROR: Could not find PYTHONNOUSERSITE in PythonConverter.swift. "
-                      "Check the existing Swift Python setup before applying this patch."
-                  )
-              swift = swift.replace(
-                  env_line,
-                  env_line + "\n        " + diagnostic_env,
+          '''
+          if "private func recordDiagnostic(_ message: String, outputDirectory: URL)" not in source:
+              source = source.replace("    private func initializeRuntime() throws {", recorder + "    private func initializeRuntime(outputDirectory: URL) throws {")
+          if source.count("recordDiagnostic(") < 7:
+              raise SystemExit("Could not add iOS-to-Python diagnostic checkpoints")
+          for required in ("let dynamicModules =", "Python framework and standard library files exist", "PYTHONDONTWRITEBYTECODE"):
+              if required not in source:
+                  raise SystemExit(f"Could not configure safe embedded Python startup: {required}")
+          for checkpoint in ("Python 3.14 selected", "embedded Python framework loaded", "Python sys import completed"):
+              if checkpoint not in source:
+                  raise SystemExit(f"Could not add Python runtime checkpoint: {checkpoint}")
+          if "initializeRuntime(outputDirectory: outputDirectory)" not in source or "initializeRuntime(outputDirectory: URL)" not in source:
+              raise SystemExit("Could not pass the diagnostics path into Python runtime setup")
+          if "dynamicallyCall(withArguments:" not in source or "raw.as(String.self)" in source:
+              raise SystemExit("Could not patch PythonKit calls")
+          path.write_text(source)
+          PY
+      - name: Add direct Files import handling
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          cp ../../patches/MLBBConverterApp.swift Sources/MLBBConverterApp.swift
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          path = Path("Sources/Info.plist")
+          data = plistlib.loads(path.read_bytes())
+          for document_type in data.get("CFBundleDocumentTypes", []):
+              document_type["CFBundleTypeRole"] = "Editor"
+              document_type["LSHandlerRank"] = "Alternate"
+              document_type["LSItemContentTypes"] = ["public.zip-archive", "com.codex.unity3d"]
+          path.write_bytes(plistlib.dumps(data))
+          PY
+      - name: Reduce conversion memory on iPhone
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          converter = Path("app/converter_bridge.py")
+          source = converter.read_text()
+          old_options = "ConvertOptions(create_zip=True, full_validation=True, strict_matching=True, preserve_shadows=True)"
+          new_options = "ConvertOptions(create_zip=True, full_validation=False, strict_matching=True, preserve_shadows=True)"
+          if old_options not in source:
+              raise SystemExit("Could not find the iOS conversion options")
+          source = source.replace(old_options, new_options, 1)
+          converter.write_text(source)
+          converter_module = Path("app/mlbb_ios_converter.py")
+          module_source = converter_module.read_text()
+          if "compresslevel=9" not in module_source:
+              raise SystemExit("Could not find the output ZIP compression setting")
+          converter_module.write_text(module_source.replace("compresslevel=9", "compresslevel=1", 1))
+          PY
+      - name: Preserve ASTC textures and record conversion diagnostics
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          bridge = Path("app/converter_bridge.py")
+          source = bridge.read_text()
+          if "from datetime import datetime" not in source:
+              source = source.replace("from contextlib import redirect_stderr, redirect_stdout", "from contextlib import redirect_stderr, redirect_stdout\nfrom datetime import datetime", 1)
+          source = source.replace(
+              "    output_dir = output_zip = None\n    try:\n        parent = Path(output_path)\n        parent.mkdir(parents=True, exist_ok=True)",
+              "    output_dir = output_zip = None\n    parent = Path(output_path)\n    parent.mkdir(parents=True, exist_ok=True)\n    diagnostic = parent / \"conversion_diagnostics.log\"\n    def record(message):\n        logs.append(message)\n        if message.startswith((\"[\", \"Extracting\", \"Found \", \"Validating\", \"Validation\", \"WARNING\", \"Starting bundle\", \"Finished bundle\", \"=== RESULT:\")):\n            try:\n                with diagnostic.open(\"a\", encoding=\"utf-8\") as stream:\n                    stream.write(f\"{datetime.now().isoformat(timespec='seconds')} {message}\\n\")\n                    stream.flush()\n            except OSError:\n                pass\n    try:",
+              1,
+          )
+          source = source.replace("logger=logs.append,\n                progress=lambda value, message: logs.append(f\"[{value:.0f}%] {message}\"))", "logger=record,\n                progress=lambda value, message: record(f\"[{value:.0f}%] {message}\"))", 1)
+          source = source.replace("        final_zip = _unique_zip(parent, _output_stem(display_name))", "        record(\"=== RESULT: SUCCESS ===\")\n        final_zip = _unique_zip(parent, _output_stem(display_name))", 1)
+          source = source.replace("        logs.append(traceback.format_exc(limit=8))", "        trace = traceback.format_exc(limit=8)\n        logs.append(trace)\n        try:\n            with diagnostic.open(\"a\", encoding=\"utf-8\") as stream:\n                stream.write(f\"{datetime.now().isoformat(timespec='seconds')} === RESULT: ERROR === {exc}\\n{trace}\\n\")\n                stream.flush()\n        except OSError:\n            pass", 1)
+          if "logger=record" not in source or "=== RESULT: SUCCESS ===" not in source:
+              raise SystemExit("Could not add persistent conversion diagnostics")
+          bridge.write_text(source)
+
+          converter = Path("app/mlbb_ios_converter.py")
+          module = converter.read_text()
+          if "Starting bundle" not in module:
+              module = module.replace(
+                  "                    self._convert_bundle(source, target)\n                    self.jobs.append((source, target))",
+                  "                    self.log(f\"Starting bundle {number}/{len(sources)}: {source.name}\")\n                    self._convert_bundle(source, target)\n                    gc.collect()\n                    self.log(f\"Finished bundle {number}/{len(sources)}: {source.name}\")\n                    self.jobs.append((source, target))",
                   1,
               )
-              swift_path.write_text(swift)
-              print("Added diagnostics environment variable to Swift.")
-          else:
-              print("Swift diagnostics environment variable already exists.")
-
-          # 2. Trace top-level imports in converter_bridge.py.
-          bridge_path = Path("app/converter_bridge.py")
-          source = bridge_path.read_text()
-          marker = "# MLBB_IOS_IMPORT_DIAGNOSTICS"
-
-          if marker not in source:
-              tree = ast.parse(source)
-              lines = source.splitlines()
-
-              # Insert trace calls before imports, working backwards so
-              # the original line numbers remain valid.
-              for node in sorted(tree.body, key=lambda n: n.lineno, reverse=True):
-                  if isinstance(node, (ast.Import, ast.ImportFrom)):
-                      if (
-                          isinstance(node, ast.ImportFrom)
-                          and node.module == "__future__"
-                      ):
-                          continue
-
-                      statement = lines[node.lineno - 1].strip()
-                      message = f"before line {node.lineno}: {statement}"
-                      lines.insert(node.lineno - 1, f"_ios_diag({message!r})")
-
-              # Reparse after adding trace calls and find a safe insertion
-              # point after the module docstring and any future imports.
-              updated = "\n".join(lines) + "\n"
-              tree = ast.parse(updated)
-              insert_after = 0
-
-              for node in tree.body:
-                  if (
-                      isinstance(node, ast.Expr)
-                      and isinstance(node.value, ast.Constant)
-                      and isinstance(node.value.value, str)
-                      and node.lineno == 1
-                  ):
-                      insert_after = node.end_lineno
-                  elif (
-                      isinstance(node, ast.ImportFrom)
-                      and node.module == "__future__"
-                  ):
-                      insert_after = node.end_lineno
-                  else:
-                      break
-
-              helper = [
-                  marker,
-                  "import os as _ios_diag_os",
-                  "def _ios_diag(message):",
-                  "    path = _ios_diag_os.environ.get('MLBB_CONVERTER_DIAGNOSTICS')",
-                  "    if not path:",
-                  "        return",
-                  "    try:",
-                  "        with open(path, 'a', encoding='utf-8') as stream:",
-                  "            stream.write('PYTHON IMPORT TRACE: ' + message + '\\n')",
-                  "            stream.flush()",
-                  "    except Exception:",
-                  "        pass",
-                  "",
-              ]
-
-              lines = updated.splitlines()
-              lines[insert_after:insert_after] = helper
-              updated = "\n".join(lines) + "\n"
-
-              # Fail the build instead of shipping a syntax-broken file.
-              ast.parse(updated)
-              bridge_path.write_text(updated)
-              print("Python import tracing installed.")
-          else:
-              print("Python import tracing is already installed.")
-
-          # 3. Final syntax check.
-          ast.parse(bridge_path.read_text())
-          print("Swift diagnostics and Python import tracing are configured.")
+          texture_line = "                    texture = obj.read()\n                    image = texture.image.convert(\"RGBA\")"
+          astc_branch = "                    texture = obj.read()\n                    source_format = int(texture.m_TextureFormat)\n                    # ASTC is a cross-platform GPU format supported by modern iPhones.\n                    # Preserve its compressed bytes instead of decoding a large image on-device.\n                    if 48 <= source_format <= 59:\n                        self.stats.textures += 1\n                        continue\n                    image = texture.image.convert(\"RGBA\")"
+          if texture_line in module:
+              module = module.replace(texture_line, astc_branch, 1)
+          elif astc_branch not in module:
+              raise SystemExit("Could not add the low-memory ASTC texture path")
+          old_validation = "                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):\n                        raise ConversionError(f\"Texture is not RGBA32: {texture.m_Name}\")"
+          new_validation = "                    texture_format = int(texture.m_TextureFormat)\n                    if texture_format != int(TextureFormat.RGBA32) and not (48 <= texture_format <= 59):\n                        raise ConversionError(f\"Texture format is not iOS-ready: {texture.m_Name}\")\n                    if 48 <= texture_format <= 59:\n                        continue"
+          if old_validation in module:
+              module = module.replace(old_validation, new_validation, 1)
+          elif new_validation not in module:
+              raise SystemExit("Could not update texture validation for preserved ASTC")
+          converter.write_text(module)
           PY
+      - name: Build unsigned iPhone app
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Ensure Python standard library is embedded in app bundle
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          app="build/Build/Products/Release-iphoneos/MLBBConverter.app"
+          mkdir -p "$app/python"
+          ditto python "$app/python"
+          test -f "$app/python/lib/python3.14/encodings/__init__.py"
+          test -d "$app/python/lib/python3.14/lib-dynload"
+          echo "Verified embedded Python standard library at $app/python/lib/python3.14"
+      - name: Package IPA
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          mkdir -p package/Payload
+          cp -R build/Build/Products/Release-iphoneos/MLBBConverter.app package/Payload/
+          ditto -c -k --sequesterRsrc --keepParent package/Payload MLBB_iOS_Converter.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MLBB_iOS_Converter_unsigned
+          path: reconstructed/MLBB_iOS_Converter/MLBB_iOS_Converter.ipa
+          if-no-files-found: error
