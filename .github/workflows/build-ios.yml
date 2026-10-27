@@ -104,9 +104,28 @@ jobs:
               "                self.recordDiagnostic(\"SWIFT: Python conversion returned\", outputDirectory: outputDirectory)\n                let jsonText = String(raw) ?? raw.description",
               1,
           )
+          failure_replacement = "\n".join([
+              "                let failureMessage: String",
+              "                if let pythonError = error as? PythonError {",
+              "                    switch pythonError {",
+              "                    case .exception(let value, _):",
+              "                        failureMessage = String(value) ?? \"Python exception (message unavailable).\"",
+              "                    case .invalidModule(let name):",
+              "                        failureMessage = \"Invalid Python module: \\(name)\"",
+              "                    case .invalidCall(let value):",
+              "                        failureMessage = \"Invalid Python call: \" + (String(value) ?? \"unknown\")",
+              "                    }",
+              "                } else {",
+              "                    failureMessage = error.localizedDescription",
+              "                }",
+              "                self.recordDiagnostic(\"SWIFT: conversion failed: \\(failureMessage)\", outputDirectory: outputDirectory)",
+              "                completion(.failure(ConverterError.conversionFailed(failureMessage)))",
+          ])
+          if "                completion(.failure(error))" not in source:
+              raise SystemExit("Could not locate conversion error callback")
           source = source.replace(
               "                completion(.failure(error))",
-              "                self.recordDiagnostic(\"SWIFT: conversion failed: \\(error.localizedDescription)\", outputDirectory: outputDirectory)\n                completion(.failure(error))",
+              failure_replacement,
               1,
           )
           recorder = '''
