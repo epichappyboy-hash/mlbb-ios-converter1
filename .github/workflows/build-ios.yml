@@ -284,7 +284,8 @@ jobs:
           if bridge_line in source:
               source = source.replace(bridge_line, throwing_bridge_line, 1)
 
-          if 'SWIFT: importing converter bridge' not in source:
+          if ('SWIFT: importing converter bridge' not in source and
+                  'SWIFT: importing converter bridge and Unity dependencies' not in source):
               source = source.replace(throwing_bridge_line,
                   '                let bridgePath = appRoot.appendingPathComponent("app/converter_bridge.py").path\n' +
                   '                self.recordDiagnostic("SWIFT: bridge file exists=\\(FileManager.default.fileExists(atPath: bridgePath)); path=\\(bridgePath)", outputDirectory: outputDirectory)\n' +
