@@ -334,10 +334,30 @@ jobs:
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
-      - name: Ensure Python standard library is embedded in app bundle
+      - name: Bundle Python converter code, dependencies, and standard library
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
+          set -euo pipefail
           app="build/Build/Products/Release-iphoneos/MLBBConverter.app"
+
+          # PythonConverter.swift adds these exact two directories to PYTHONPATH
+          # under Bundle.main.bundleURL. They must be copied into the built app;
+          # building the Swift target alone does not put them in the app bundle.
+          test -f "app/converter_bridge.py"
+          test -f "app/mlbb_ios_converter.py"
+          test -d "app_packages"
+
+          rm -rf "$app/app" "$app/app_packages"
+          ditto "app" "$app/app"
+          ditto "app_packages" "$app/app_packages"
+
+          test -f "$app/app/converter_bridge.py"
+          test -f "$app/app/mlbb_ios_converter.py"
+          test -d "$app/app_packages"
+          echo "Verified converter bridge and package directories inside app bundle:"
+          echo "  $app/app/converter_bridge.py"
+          echo "  $app/app_packages"
+
           mkdir -p "$app/python"
           ditto python "$app/python"
           test -f "$app/python/lib/python3.14/encodings/__init__.py"
