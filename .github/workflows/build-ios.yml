@@ -1,0 +1,33 @@
+name: Build standalone MLBB iOS Converter
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble project archive
+        run: |
+          cat MLBB_iOS_Converter_Project.zip.part* > MLBB_iOS_Converter_Project.zip
+          unzip -q MLBB_iOS_Converter_Project.zip -d reconstructed
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: python3 scripts/generate_project.py && xcodegen generate
+      - name: Build unsigned iPhone app
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Package IPA
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          mkdir -p package/Payload
+          cp -R build/Build/Products/Release-iphoneos/MLBBConverter.app package/Payload/
+          ditto -c -k --sequesterRsrc --keepParent package/Payload MLBB_iOS_Converter.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MLBB_iOS_Converter_unsigned
+          path: reconstructed/MLBB_iOS_Converter/MLBB_iOS_Converter.ipa
+          if-no-files-found: error
