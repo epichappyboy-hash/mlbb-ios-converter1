@@ -254,7 +254,7 @@ jobs:
           path.write_text(source)
           print("Removed the second sys import; runtime PYTHONPATH is configured before interpreter initialization.")
           PY
-      - name: Apply explicit Python GIL protection to bridge import
+      - name: Add converter bridge import checkpoints
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
           python3 - <<'PY'
@@ -262,18 +262,18 @@ jobs:
           path = Path("Sources/PythonConverter.swift")
           source = path.read_text()
           old = 'let bridge = Python.import("converter_bridge")'
-          new = 'self.recordDiagnostic("SWIFT: acquiring Python GIL before converter bridge import", outputDirectory: outputDirectory)\n                let bridge = Python.withGil { Python.import("converter_bridge") }\n                self.recordDiagnostic("SWIFT: converter bridge imported", outputDirectory: outputDirectory)'
+          new = 'self.recordDiagnostic("SWIFT: importing converter bridge", outputDirectory: outputDirectory)\n                let bridge = Python.import("converter_bridge")\n                self.recordDiagnostic("SWIFT: converter bridge imported", outputDirectory: outputDirectory)'
           if old not in source:
               raise SystemExit("Could not locate converter bridge import for GIL protection")
           source = source.replace(old, new, 1)
           source = source.replace(
               'let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [',
-              'self.recordDiagnostic("SWIFT: acquiring Python GIL for conversion call", outputDirectory: outputDirectory)\n                let raw = try Python.withGil { try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [',
+              'self.recordDiagnostic("SWIFT: calling converter bridge", outputDirectory: outputDirectory)\n                let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [',
               1,
           )
           source = source.replace(
               'input.lastPathComponent\n                ])',
-              'input.lastPathComponent\n                ]) }',
+              'input.lastPathComponent\n                ])',
               1,
           )
           if 'Python.withGil { Python.import("converter_bridge") }' not in source:
