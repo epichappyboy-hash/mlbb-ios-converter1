@@ -347,6 +347,44 @@ jobs:
           test -f "app/mlbb_ios_converter.py"
           test -d "app_packages"
 
+          # UnityPy eagerly imports AudioClipConverter from UnityPy.export.__init__.
+          # That module imports fmod_toolkit at module load, although the iOS
+          # converter only needs Texture2DConverter here. Keep FMOD optional:
+          # normal imports/texture conversion work without it, and a true request
+          # to decode unsupported FMOD audio reports a focused error.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("app_packages/UnityPy/export/AudioClipConverter.py")
+          source = path.read_text()
+          eager_import = "import fmod_toolkit\n"
+          optional_import = (
+              "try:\n"
+              "    import fmod_toolkit\n"
+              "except ImportError:\n"
+              "    fmod_toolkit = None\n"
+          )
+          if eager_import in source:
+              source = source.replace(eager_import, optional_import, 1)
+          elif "try:\n    import fmod_toolkit" not in source:
+              raise SystemExit("Could not locate UnityPy's FMOD import to make optional")
+
+          call = "return fmod_toolkit.raw_to_wav("
+          guarded_call = (
+              'if fmod_toolkit is None:\n'
+              '        raise RuntimeError("FMOD audio decoding is unavailable in this iOS build.")\n'
+              '    return fmod_toolkit.raw_to_wav('
+          )
+          if call in source:
+              source = source.replace(call, guarded_call, 1)
+          elif "FMOD audio decoding is unavailable in this iOS build." not in source:
+              raise SystemExit("Could not guard UnityPy's FMOD decoding call")
+
+          compile(source, str(path), "exec")
+          path.write_text(source)
+          print("Patched UnityPy AudioClipConverter: fmod_toolkit is optional on iOS.")
+          PY
+
           rm -rf "$app/app" "$app/app_packages"
           ditto "app" "$app/app"
           ditto "app_packages" "$app/app_packages"
