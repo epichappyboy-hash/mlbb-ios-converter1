@@ -17,6 +17,25 @@ jobs:
       - name: Generate Xcode project
         working-directory: reconstructed/MLBB_iOS_Converter
         run: python3 scripts/generate_project.py && xcodegen generate
+      - name: Fix PythonKit throwing invocation
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("Sources/PythonConverter.swift")
+          source = path.read_text()
+          source = source.replace(
+              "bridge.run_conversion.throwing(",
+              "bridge.run_conversion.throwing.dynamicallyCall(withArguments: [",
+          )
+          source = source.replace(
+              "input.lastPathComponent\n                )",
+              "input.lastPathComponent\n                ])",
+          )
+          if "dynamicallyCall(withArguments:" not in source:
+              raise SystemExit("Could not patch PythonKit call")
+          path.write_text(source)
+          PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
@@ -31,3 +50,4 @@ jobs:
           name: MLBB_iOS_Converter_unsigned
           path: reconstructed/MLBB_iOS_Converter/MLBB_iOS_Converter.ipa
           if-no-files-found: error
+
