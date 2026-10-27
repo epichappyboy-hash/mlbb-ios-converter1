@@ -55,6 +55,21 @@ jobs:
               1,
           )
           source = source.replace(
+              "        PythonLibrary.useVersion(3, 14)",
+              "        self.recordDiagnostic(\"SWIFT: selecting embedded Python 3.14\", outputDirectory: outputDirectory)\n        PythonLibrary.useVersion(3, 14)\n        self.recordDiagnostic(\"SWIFT: Python 3.14 selected\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "        PythonLibrary.useLibrary(at: pythonLibrary)",
+              "        self.recordDiagnostic(\"SWIFT: loading embedded Python framework\", outputDirectory: outputDirectory)\n        PythonLibrary.useLibrary(at: pythonLibrary)\n        self.recordDiagnostic(\"SWIFT: embedded Python framework loaded\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "        _ = Python.import(\"sys\")",
+              "        self.recordDiagnostic(\"SWIFT: initializing Python interpreter by importing sys\", outputDirectory: outputDirectory)\n        _ = Python.import(\"sys\")\n        self.recordDiagnostic(\"SWIFT: Python sys import completed\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
               "                let sys = Python.import(\"sys\")",
               "                self.recordDiagnostic(\"SWIFT: importing Python sys module\", outputDirectory: outputDirectory)\n                let sys = Python.import(\"sys\")",
               1,
@@ -98,6 +113,9 @@ jobs:
               source = source.replace("    private func initializeRuntime() throws {", recorder + "    private func initializeRuntime() throws {")
           if source.count("recordDiagnostic(") < 7:
               raise SystemExit("Could not add iOS-to-Python diagnostic checkpoints")
+          for checkpoint in ("Python 3.14 selected", "embedded Python framework loaded", "Python sys import completed"):
+              if checkpoint not in source:
+                  raise SystemExit(f"Could not add Python runtime checkpoint: {checkpoint}")
           if "dynamicallyCall(withArguments:" not in source or "raw.as(String.self)" in source:
               raise SystemExit("Could not patch PythonKit calls")
           path.write_text(source)
