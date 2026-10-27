@@ -273,13 +273,30 @@ jobs:
                                   'input.lastPathComponent\n                ])')
 
           bridge_line = '                let bridge = Python.import("converter_bridge")'
-          if bridge_line not in source:
+          throwing_bridge_line = '                let bridge = try Python.attemptImport("converter_bridge")'
+          if bridge_line not in source and throwing_bridge_line not in source:
               raise SystemExit("Could not locate converter bridge import in PythonConverter.swift")
+
+          # Python.import() is implemented with try! in PythonKit. A failed
+          # import therefore traps the app before the existing Swift catch can
+          # write the real error. Use the throwing API so import failures become
+          # diagnostics instead of an immediate fatal crash.
+          if bridge_line in source:
+              source = source.replace(bridge_line, throwing_bridge_line, 1)
+
           if 'SWIFT: importing converter bridge' not in source:
-              source = source.replace(bridge_line,
+              source = source.replace(throwing_bridge_line,
+                  '                let bridgePath = appRoot.appendingPathComponent("app/converter_bridge.py").path\n' +
+                  '                self.recordDiagnostic("SWIFT: bridge file exists=\\(FileManager.default.fileExists(atPath: bridgePath)); path=\\(bridgePath)", outputDirectory: outputDirectory)\n' +
+                  '                let packagesPath = appRoot.appendingPathComponent("app_packages", isDirectory: true).path\n' +
+                  '                self.recordDiagnostic("SWIFT: app_packages exists=\\(FileManager.default.fileExists(atPath: packagesPath)); path=\\(packagesPath)", outputDirectory: outputDirectory)\n' +
                   '                self.recordDiagnostic("SWIFT: importing converter bridge", outputDirectory: outputDirectory)\n' +
-                  bridge_line + '\n' +
+                  throwing_bridge_line + '\n' +
                   '                self.recordDiagnostic("SWIFT: converter bridge imported", outputDirectory: outputDirectory)', 1)
+          if 'Python.import("converter_bridge")' in source:
+              raise SystemExit("Unsafe non-throwing converter bridge import remains")
+          if 'try Python.attemptImport("converter_bridge")' not in source:
+              raise SystemExit("Throwing converter bridge import was not installed")
 
           call_line = '                let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: ['
           if call_line not in source:
