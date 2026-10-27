@@ -1,12 +1,24 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
+import Combine
 
 @main
 struct MLBBConverterApp: App {
     var body: some Scene {
         WindowGroup { ConverterView() }
     }
+}
+
+private enum ConverterPalette {
+    static let background = Color(red: 23.0 / 255.0, green: 26.0 / 255.0, blue: 33.0 / 255.0)
+    static let panel = Color(red: 34.0 / 255.0, green: 38.0 / 255.0, blue: 49.0 / 255.0)
+    static let field = Color(red: 17.0 / 255.0, green: 20.0 / 255.0, blue: 26.0 / 255.0)
+    static let text = Color(red: 238.0 / 255.0, green: 241.0 / 255.0, blue: 247.0 / 255.0)
+    static let muted = Color(red: 170.0 / 255.0, green: 178.0 / 255.0, blue: 192.0 / 255.0)
+    static let blue = Color(red: 75.0 / 255.0, green: 140.0 / 255.0, blue: 255.0 / 255.0)
+    static let green = Color(red: 61.0 / 255.0, green: 220.0 / 255.0, blue: 151.0 / 255.0)
+    static let red = Color(red: 255.0 / 255.0, green: 107.0 / 255.0, blue: 107.0 / 255.0)
 }
 
 struct ConverterView: View {
@@ -17,7 +29,8 @@ struct ConverterView: View {
     @State private var isConverting = false
     @State private var diagnosticsAvailable = false
     @State private var showDiagnostics = false
-    @State private var status = "Pumili ng Android Unity bundle (.unity3d) o ZIP file."
+    @State private var status = "Ready"
+    @State private var diagnosticText = "Converter logs will appear here."
     @State private var errorMessage: String?
 
     private var documents: URL {
@@ -26,87 +39,54 @@ struct ConverterView: View {
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
-                Image(systemName: "arrow.left.arrow.right.square")
-                    .font(.system(size: 46, weight: .medium))
-                    .foregroundColor(.blue)
-                Text("MLBB iOS Converter")
-                    .font(.title2.bold())
-                Text("Android Unity assets → iOS")
-                    .foregroundColor(.secondary)
+            ZStack {
+                ConverterPalette.background.ignoresSafeArea()
 
-                Button {
-                    showImporter = true
-                } label: {
-                    Label(inputURL?.lastPathComponent ?? "Pumili ng asset file", systemImage: "doc.badge.plus")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(isConverting)
-
-                Button(action: convert) {
-                    HStack {
-                        if isConverting { ProgressView().tint(.white) }
-                        Text(isConverting ? "Nagko-convert…" : "I-CONVERT SA iOS")
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        header
+                        pathsPanel
+                        optionsPanel
+                        convertButton
+                        statusPanel
+                        logPanel
+                        outputActions
+                        footer
                     }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 18)
+                    .padding(.bottom, 28)
+                    .frame(maxWidth: 760)
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(inputURL == nil || isConverting)
-
-                Text(status)
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                if diagnosticsAvailable {
-                    Button {
-                        showDiagnostics = true
-                    } label: {
-                        Label("I-share ang diagnostic log", systemImage: "doc.text.magnifyingglass")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .sheet(isPresented: $showDiagnostics) {
-                        ActivityView(activityItems: [diagnosticsFile])
-                    }
-                }
-
-                if let outputURL {
-                    Button {
-                        showShareSheet = true
-                    } label: {
-                        Label("I-save / I-share ang converted ZIP", systemImage: "square.and.arrow.up")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .sheet(isPresented: $showShareSheet) {
-                        ActivityView(activityItems: [outputURL])
-                    }
-                }
-                Spacer()
             }
-            .padding(24)
-            .navigationTitle("Converter")
-            .navigationBarTitleDisplayMode(.inline)
-            .alert("Hindi natuloy", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            .navigationBarHidden(true)
+            .alert("Conversion failed", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: {
                 Text(errorMessage ?? "")
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
+        .preferredColorScheme(.dark)
         .onOpenURL { url in
             importFile(url)
         }
         .onAppear {
-            diagnosticsAvailable = FileManager.default.fileExists(atPath: diagnosticsFile.path)
+            refreshDiagnostics()
             if let log = try? String(contentsOf: diagnosticsFile, encoding: .utf8),
                log.contains("=== CONVERSION STARTED ==="),
                !log.contains("=== RESULT: SUCCESS ==="),
                !log.contains("=== RESULT: ERROR ===") {
-                let lastLine = log.split(separator: "\n").last.map(String.init) ?? "Walang huling progress message."
-                status = "Biglang natigil ang huling conversion. Huling detalye: \(lastLine)"
+                let lastLine = log.split(separator: "\n").last.map(String.init) ?? "No last progress message."
+                status = "Previous conversion stopped. Last detail: \(lastLine)"
             }
+        }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+            if isConverting { refreshDiagnostics() }
         }
         .sheet(isPresented: $showImporter) {
             AssetDocumentPicker { selected in
@@ -115,19 +95,322 @@ struct ConverterView: View {
         }
     }
 
+    private var header: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: "arrow.left.arrow.right.square")
+                .font(.system(size: 27, weight: .semibold))
+                .foregroundColor(ConverterPalette.blue)
+                .frame(width: 58, height: 58)
+                .background(ConverterPalette.panel)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("MLBB iOS Auto Converter")
+                    .font(.system(size: 23, weight: .bold, design: .rounded))
+                    .foregroundColor(ConverterPalette.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Android → iOS Unity bundle converter")
+                    .font(.system(size: 13))
+                    .foregroundColor(ConverterPalette.muted)
+                Text("Exact ShaderVariants matching")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(ConverterPalette.green)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.bottom, 2)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var pathsPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeading("FILES & PATHS", icon: "folder")
+            Divider().overlay(ConverterPalette.field).padding(.vertical, 12)
+
+            HStack(spacing: 12) {
+                pathIcon("doc.zipper", color: ConverterPalette.blue)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Android input")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(ConverterPalette.text)
+                    Text(inputURL?.lastPathComponent ?? "Select a .unity3d bundle or ZIP file")
+                        .font(.system(size: 12))
+                        .foregroundColor(inputURL == nil ? ConverterPalette.muted : ConverterPalette.text)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 4)
+                Button {
+                    showImporter = true
+                } label: {
+                    Text(inputURL == nil ? "Browse" : "Change")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(ConverterPalette.text)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 9)
+                        .background(ConverterPalette.field)
+                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+                .disabled(isConverting)
+            }
+            .padding(.vertical, 6)
+
+            Divider().overlay(ConverterPalette.field).padding(.vertical, 10)
+
+            HStack(spacing: 12) {
+                pathIcon("square.stack.3d.up", color: ConverterPalette.green)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("iOS shaders")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(ConverterPalette.text)
+                    Text("Built-in ShaderVariants · ready")
+                        .font(.system(size: 12))
+                        .foregroundColor(ConverterPalette.muted)
+                }
+                Spacer()
+                statePill("READY", color: ConverterPalette.green)
+            }
+            .padding(.vertical, 6)
+
+            Divider().overlay(ConverterPalette.field).padding(.vertical, 10)
+
+            HStack(spacing: 12) {
+                pathIcon("externaldrive", color: ConverterPalette.muted)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Output folder")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(ConverterPalette.text)
+                    Text(outputURL?.deletingLastPathComponent().lastPathComponent ?? "App storage / Converted")
+                        .font(.system(size: 12))
+                        .foregroundColor(ConverterPalette.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                statePill("ON DEVICE", color: ConverterPalette.muted)
+            }
+            .padding(.vertical, 6)
+        }
+        .padding(16)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+    }
+
+    private var optionsPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeading("CONVERSION OPTIONS", icon: "slider.horizontal.3")
+            settingRow(
+                title: "Create ZIP",
+                subtitle: "Package the converted assets into a ZIP",
+                enabled: true
+            )
+            settingRow(
+                title: "Full texture validation",
+                subtitle: "Reduced for iPhone memory safety",
+                enabled: false,
+                badge: "OPTIMIZED"
+            )
+            settingRow(
+                title: "Preserve shadows",
+                subtitle: "Keep shadow-related assets during conversion",
+                enabled: true
+            )
+        }
+        .padding(16)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+    }
+
+    private var convertButton: some View {
+        Button(action: convert) {
+            HStack(spacing: 10) {
+                if isConverting {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 16, weight: .bold))
+                }
+                Text(isConverting ? "CONVERTING TO iOS…" : "CONVERT TO iOS")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                Spacer()
+                if !isConverting {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 13, weight: .bold))
+                }
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(inputURL == nil || isConverting ? ConverterPalette.blue.opacity(0.45) : ConverterPalette.blue)
+            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(inputURL == nil || isConverting)
+    }
+
+    private var statusPanel: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(isConverting ? ConverterPalette.blue : (outputURL != nil ? ConverterPalette.green : ConverterPalette.muted))
+                .frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(isConverting ? "Working" : (outputURL != nil ? "Complete" : "Status"))
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(ConverterPalette.text)
+                Text(status)
+                    .font(.system(size: 12))
+                    .foregroundColor(ConverterPalette.muted)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if isConverting {
+                ProgressView()
+                    .tint(ConverterPalette.green)
+                    .scaleEffect(0.9)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var logPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionHeading("CONVERSION LOG", icon: "terminal")
+                Spacer()
+                if diagnosticsAvailable {
+                    Button {
+                        showDiagnostics = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(ConverterPalette.muted)
+                            .frame(width: 34, height: 32)
+                            .background(ConverterPalette.field)
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .sheet(isPresented: $showDiagnostics) {
+                        ActivityView(activityItems: [diagnosticsFile])
+                    }
+                    .accessibilityLabel("Share diagnostic log")
+                }
+            }
+
+            ScrollView {
+                Text(diagnosticText)
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundColor(ConverterPalette.text.opacity(0.88))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .frame(minHeight: 145, maxHeight: 220)
+            .background(ConverterPalette.field)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .padding(16)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var outputActions: some View {
+        if let outputURL {
+            Button {
+                showShareSheet = true
+            } label: {
+                Label("Save / Share Output ZIP", systemImage: "square.and.arrow.up")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(ConverterPalette.text)
+                    .frame(maxWidth: .infinity, minHeight: 46)
+                    .background(ConverterPalette.field)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showShareSheet) {
+                ActivityView(activityItems: [outputURL])
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Text("MLBB iOS AUTO CONVERTER")
+            Spacer()
+            Text("iOS • Memory-optimized")
+        }
+        .font(.system(size: 10, weight: .medium, design: .monospaced))
+        .foregroundColor(ConverterPalette.muted.opacity(0.8))
+        .padding(.top, 2)
+    }
+
+    private func sectionHeading(_ title: String, icon: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(ConverterPalette.blue)
+            Text(title)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .tracking(1.1)
+                .foregroundColor(ConverterPalette.muted)
+        }
+    }
+
+    private func pathIcon(_ symbol: String, color: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundColor(color)
+            .frame(width: 38, height: 38)
+            .background(ConverterPalette.field)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func statePill(_ title: String, color: Color) -> some View {
+        Text(title)
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .tracking(0.4)
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
+    }
+
+    private func settingRow(title: String, subtitle: String, enabled: Bool, badge: String? = nil) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: enabled ? "checkmark.square.fill" : "checkmark.square")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(enabled ? ConverterPalette.green : ConverterPalette.muted)
+                .frame(width: 23)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(ConverterPalette.text)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(ConverterPalette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            if let badge {
+                statePill(badge, color: ConverterPalette.blue)
+            } else if enabled {
+                statePill("ON", color: ConverterPalette.green)
+            }
+        }
+    }
+
     private func importFile(_ selected: URL) {
         let ext = selected.pathExtension.lowercased()
         guard ext == "unity3d" || ext == "zip" else {
-            errorMessage = "Hindi suportado ang file na ito. Pumili ng .unity3d o .zip file."
+            errorMessage = "Unsupported file. Select a .unity3d bundle or .zip file."
             return
         }
 
-        status = "Ini-import ang \(selected.lastPathComponent)…"
+        status = "Importing \(selected.lastPathComponent)…"
         errorMessage = nil
         let destinationDirectory = documents.appendingPathComponent("Imported", isDirectory: true)
 
-        // Files and other providers can give the app a security-scoped URL whose
-        // contents must be coordinated before they are copied into our container.
         DispatchQueue.global(qos: .userInitiated).async {
             let scoped = selected.startAccessingSecurityScopedResource()
             defer { if scoped { selected.stopAccessingSecurityScopedResource() } }
@@ -144,8 +427,6 @@ struct ConverterView: View {
                     do {
                         try FileManager.default.copyItem(at: readableURL, to: destination)
                     } catch {
-                        // Some providers return a coordinated URL that remains readable
-                        // only through the original security-scoped URL.
                         try FileManager.default.copyItem(at: selected, to: destination)
                     }
                     importedURL = destination
@@ -157,18 +438,18 @@ struct ConverterView: View {
             let failure = coordinationError ?? copyError
             DispatchQueue.main.async {
                 if let failure {
-                    status = "Hindi na-import ang file."
-                    errorMessage = "Hindi mabasa ang file mula sa Files. \(failure.localizedDescription)"
+                    status = "Could not import file."
+                    errorMessage = "Unable to read file from Files. \(failure.localizedDescription)"
                     return
                 }
                 guard let importedURL else {
-                    status = "Hindi na-import ang file."
-                    errorMessage = "Walang file na naipasa mula sa Files. Subukan ulit gamit ang Share → MLBB Converter."
+                    status = "Could not import file."
+                    errorMessage = "No file was imported. Try Share → MLBB Converter from the Files app."
                     return
                 }
                 inputURL = importedURL
                 outputURL = nil
-                status = "Handa nang i-convert: \(selected.lastPathComponent)"
+                status = "Ready to convert: \(selected.lastPathComponent)"
             }
         }
     }
@@ -177,24 +458,34 @@ struct ConverterView: View {
         guard let inputURL else { return }
         isConverting = true
         outputURL = nil
-        status = "Binabasa ang shaders at kino-convert ang Unity bundles…"
+        status = "Preparing shaders and converting Unity bundles…"
         let outputDirectory = documents.appendingPathComponent("Converted", isDirectory: true)
         try? FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         let started = "=== CONVERSION STARTED ===\n\(Date().formatted())\nInput: \(inputURL.lastPathComponent)\n"
         try? started.write(to: diagnosticsFile, atomically: true, encoding: .utf8)
+        diagnosticText = started
+        diagnosticsAvailable = true
+
         PythonConverter.shared.convert(input: inputURL, outputDirectory: outputDirectory) { result in
             DispatchQueue.main.async {
                 isConverting = false
-                diagnosticsAvailable = FileManager.default.fileExists(atPath: diagnosticsFile.path)
+                refreshDiagnostics()
                 switch result {
                 case .success(let url):
                     outputURL = url
-                    status = "Tapos na. Puwede mo nang i-save ang ZIP sa Files."
+                    status = "Complete. Save or share the converted ZIP."
                 case .failure(let error):
-                    status = "Hindi natuloy ang conversion."
+                    status = "Conversion failed."
                     errorMessage = error.localizedDescription
                 }
             }
+        }
+    }
+
+    private func refreshDiagnostics() {
+        diagnosticsAvailable = FileManager.default.fileExists(atPath: diagnosticsFile.path)
+        if let log = try? String(contentsOf: diagnosticsFile, encoding: .utf8), !log.isEmpty {
+            diagnosticText = log
         }
     }
 
