@@ -216,6 +216,13 @@ jobs:
           elif new_validation not in module:
               raise SystemExit("Could not update texture validation for preserved ASTC")
           converter.write_text(module)
+
+          # Install the lazy-import bridge last so earlier compatibility patches
+          # cannot overwrite the crash fix.
+          patched_bridge = Path("../../patches/converter_bridge.py")
+          if not patched_bridge.is_file():
+              raise SystemExit("Missing patches/converter_bridge.py")
+          bridge.write_text(patched_bridge.read_text())
           PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
