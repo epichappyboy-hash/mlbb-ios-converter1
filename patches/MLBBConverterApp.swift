@@ -74,7 +74,7 @@ struct ConverterView: View {
             .padding(24)
             .navigationTitle("Converter")
             .navigationBarTitleDisplayMode(.inline)
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.zip, UTType(filenameExtension: "unity3d") ?? .data], allowsMultipleSelection: false) { result in
                 do {
                     guard let selected = try result.get().first else { return }
                     importFile(selected)
@@ -82,35 +82,66 @@ struct ConverterView: View {
                     errorMessage = error.localizedDescription
                 }
             }
-            .onOpenURL { url in
-                importFile(url)
-            }
             .alert("Hindi natuloy", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: {
                 Text(errorMessage ?? "")
             }
         }
+        .onOpenURL { url in
+            importFile(url)
+        }
     }
 
     private func importFile(_ selected: URL) {
-        let scoped = selected.startAccessingSecurityScopedResource()
-        defer { if scoped { selected.stopAccessingSecurityScopedResource() } }
+        let ext = selected.pathExtension.lowercased()
+        guard ext == "unity3d" || ext == "zip" else {
+            errorMessage = "Hindi suportado ang file na ito. Pumili ng .unity3d o .zip file."
+            return
+        }
 
-        do {
-            let ext = selected.pathExtension.lowercased()
-            guard ext == "unity3d" || ext == "zip" else {
-                throw ConverterError.conversionFailed("Pumili ng .unity3d o .zip file.")
+        status = "Ini-import ang (selected.lastPathComponent)…"
+        errorMessage = nil
+        let destinationDirectory = documents.appendingPathComponent("Imported", isDirectory: true)
+
+        // Files and other providers can give the app a security-scoped URL whose
+        // contents must be coordinated before they are copied into our container.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let scoped = selected.startAccessingSecurityScopedResource()
+            defer { if scoped { selected.stopAccessingSecurityScopedResource() } }
+
+            var coordinationError: NSError?
+            var copyError: Error?
+            var importedURL: URL?
+            let coordinator = NSFileCoordinator()
+
+            coordinator.coordinate(readingItemAt: selected, options: [], error: &coordinationError) { readableURL in
+                do {
+                    try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+                    let destination = destinationDirectory.appendingPathComponent(UUID().uuidString + "_" + selected.lastPathComponent)
+                    try FileManager.default.copyItem(at: readableURL, to: destination)
+                    importedURL = destination
+                } catch {
+                    copyError = error
+                }
             }
-            let imports = documents.appendingPathComponent("Imported", isDirectory: true)
-            try FileManager.default.createDirectory(at: imports, withIntermediateDirectories: true)
-            let destination = imports.appendingPathComponent(UUID().uuidString + "_" + selected.lastPathComponent)
-            try FileManager.default.copyItem(at: selected, to: destination)
-            inputURL = destination
-            outputURL = nil
-            status = "Handa nang i-convert: \(selected.lastPathComponent)"
-        } catch {
-            errorMessage = error.localizedDescription
+
+            let failure: Error? = coordinationError ?? copyError
+            DispatchQueue.main.async {
+                if let failure {
+                    status = "Hindi na-import ang file."
+                    errorMessage = "Hindi mabasa ang file mula sa Files. (failure.localizedDescription)"
+                    return
+                }
+                guard let importedURL else {
+                    status = "Hindi na-import ang file."
+                    errorMessage = "Walang file na naipasa mula sa Files. Subukan ulit gamit ang Share → MLBB Converter."
+                    return
+                }
+                inputURL = importedURL
+                outputURL = nil
+                status = "Handa nang i-convert: (selected.lastPathComponent)"
+            }
         }
     }
 
@@ -145,4 +176,3 @@ struct ActivityView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
-
