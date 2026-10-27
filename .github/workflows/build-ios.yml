@@ -87,6 +87,49 @@ jobs:
               raise SystemExit("Could not find the output ZIP compression setting")
           converter_module.write_text(module_source.replace("compresslevel=9", "compresslevel=1", 1))
           PY
+      - name: Preserve ASTC textures and record conversion diagnostics
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          bridge = Path("app/converter_bridge.py")
+          source = bridge.read_text()
+          if "from datetime import datetime" not in source:
+              source = source.replace("from contextlib import redirect_stderr, redirect_stdout", "from contextlib import redirect_stderr, redirect_stdout\nfrom datetime import datetime", 1)
+          source = source.replace(
+              "    output_dir = output_zip = None\n    try:\n        parent = Path(output_path)\n        parent.mkdir(parents=True, exist_ok=True)",
+              "    output_dir = output_zip = None\n    parent = Path(output_path)\n    parent.mkdir(parents=True, exist_ok=True)\n    diagnostic = parent / \"conversion_diagnostics.log\"\n    def record(message):\n        logs.append(message)\n        if message.startswith((\"[\", \"Extracting\", \"Found \", \"Validating\", \"Validation\", \"WARNING\", \"Starting bundle\", \"Finished bundle\", \"=== RESULT:\")):\n            try:\n                with diagnostic.open(\"a\", encoding=\"utf-8\") as stream:\n                    stream.write(f\"{datetime.now().isoformat(timespec='seconds')} {message}\\n\")\n                    stream.flush()\n            except OSError:\n                pass\n    try:",
+              1,
+          )
+          source = source.replace("logger=logs.append,\n                progress=lambda value, message: logs.append(f\"[{value:.0f}%] {message}\"))", "logger=record,\n                progress=lambda value, message: record(f\"[{value:.0f}%] {message}\"))", 1)
+          source = source.replace("        final_zip = _unique_zip(parent, _output_stem(display_name))", "        record(\"=== RESULT: SUCCESS ===\")\n        final_zip = _unique_zip(parent, _output_stem(display_name))", 1)
+          source = source.replace("        logs.append(traceback.format_exc(limit=8))", "        trace = traceback.format_exc(limit=8)\n        logs.append(trace)\n        try:\n            with diagnostic.open(\"a\", encoding=\"utf-8\") as stream:\n                stream.write(f\"{datetime.now().isoformat(timespec='seconds')} === RESULT: ERROR === {exc}\\n{trace}\\n\")\n                stream.flush()\n        except OSError:\n            pass", 1)
+          if "logger=record" not in source or "=== RESULT: SUCCESS ===" not in source:
+              raise SystemExit("Could not add persistent conversion diagnostics")
+          bridge.write_text(source)
+
+          converter = Path("app/mlbb_ios_converter.py")
+          module = converter.read_text()
+          if "Starting bundle" not in module:
+              module = module.replace(
+                  "                    self._convert_bundle(source, target)\n                    self.jobs.append((source, target))",
+                  "                    self.log(f\"Starting bundle {number}/{len(sources)}: {source.name}\")\n                    self._convert_bundle(source, target)\n                    gc.collect()\n                    self.log(f\"Finished bundle {number}/{len(sources)}: {source.name}\")\n                    self.jobs.append((source, target))",
+                  1,
+              )
+          texture_line = "                    texture = obj.read()\n                    image = texture.image.convert(\"RGBA\")"
+          astc_branch = "                    texture = obj.read()\n                    source_format = int(texture.m_TextureFormat)\n                    # ASTC is a cross-platform GPU format supported by modern iPhones.\n                    # Preserve its compressed bytes instead of decoding a large image on-device.\n                    if 48 <= source_format <= 59:\n                        self.stats.textures += 1\n                        continue\n                    image = texture.image.convert(\"RGBA\")"
+          if texture_line in module:
+              module = module.replace(texture_line, astc_branch, 1)
+          elif astc_branch not in module:
+              raise SystemExit("Could not add the low-memory ASTC texture path")
+          old_validation = "                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):\n                        raise ConversionError(f\"Texture is not RGBA32: {texture.m_Name}\")"
+          new_validation = "                    texture_format = int(texture.m_TextureFormat)\n                    if texture_format != int(TextureFormat.RGBA32) and not (48 <= texture_format <= 59):\n                        raise ConversionError(f\"Texture format is not iOS-ready: {texture.m_Name}\")\n                    if 48 <= texture_format <= 59:\n                        continue"
+          if old_validation in module:
+              module = module.replace(old_validation, new_validation, 1)
+          elif new_validation not in module:
+              raise SystemExit("Could not update texture validation for preserved ASTC")
+          converter.write_text(module)
+          PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
