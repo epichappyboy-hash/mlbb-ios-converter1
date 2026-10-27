@@ -220,6 +220,15 @@ jobs:
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Ensure Python standard library is embedded in app bundle
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          app="build/Build/Products/Release-iphoneos/MLBBConverter.app"
+          mkdir -p "$app/python"
+          ditto python "$app/python"
+          test -f "$app/python/lib/python3.14/encodings/__init__.py"
+          test -d "$app/python/lib/python3.14/lib-dynload"
+          echo "Verified embedded Python standard library at $app/python/lib/python3.14"
       - name: Package IPA
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
