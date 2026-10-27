@@ -224,6 +224,36 @@ jobs:
               raise SystemExit("Missing patches/converter_bridge.py")
           bridge.write_text(patched_bridge.read_text())
           PY
+      - name: Avoid second embedded Python sys import hang
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("Sources/PythonConverter.swift")
+          source = path.read_text()
+          lines = source.splitlines()
+          output = []
+          replaced = False
+          for line in lines:
+              if 'self.recordDiagnostic("SWIFT: importing Python sys module"' in line:
+                  output.append('                self.recordDiagnostic("SWIFT: skipping second sys import; PYTHONPATH was set before initialization", outputDirectory: outputDirectory)')
+                  replaced = True
+                  continue
+              if 'let sys = Python.import("sys")' in line:
+                  replaced = True
+                  continue
+              if "sys.path" in line:
+                  replaced = True
+                  continue
+              output.append(line)
+          if not replaced:
+              raise SystemExit("Could not find the second sys import/path setup to replace")
+          source = "\n".join(output) + "\n"
+          if 'let sys = Python.import("sys")' in source or "sys.path" in source:
+              raise SystemExit("Second sys import/path references remain")
+          path.write_text(source)
+          print("Removed the second sys import; runtime PYTHONPATH is configured before interpreter initialization.")
+          PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
