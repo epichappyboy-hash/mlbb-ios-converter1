@@ -14,9 +14,22 @@ jobs:
           unzip -q MLBB_iOS_Converter_Project.zip -d reconstructed
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Generate Xcode project
+      - name: Generate Xcode project and configure Python extensions
         working-directory: reconstructed/MLBB_iOS_Converter
-        run: python3 scripts/generate_project.py && xcodegen generate
+        run: |
+          python3 scripts/generate_project.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("project.yml")
+          lines = path.read_text().splitlines()
+          output = []
+          for line in lines:
+              output.append(line)
+              if line.startswith("      - framework: Frameworks/") and not line.endswith("Python.framework"):
+                  output.append("        link: false")
+          path.write_text("\n".join(output) + "\n")
+          PY
+          xcodegen generate
       - name: Fix PythonKit throwing and string conversion
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
