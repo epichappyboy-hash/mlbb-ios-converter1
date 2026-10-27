@@ -53,6 +53,9 @@ jobs:
               raise SystemExit("Could not patch PythonKit calls")
           path.write_text(source)
           PY
+      - name: Add direct Files import handling
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: cp ../../patches/MLBBConverterApp.swift Sources/MLBBConverterApp.swift
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
