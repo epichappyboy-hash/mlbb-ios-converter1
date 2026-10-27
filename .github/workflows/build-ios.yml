@@ -259,29 +259,40 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           path = Path("Sources/PythonConverter.swift")
           source = path.read_text()
-          old = 'let bridge = Python.import("converter_bridge")'
-          new = 'self.recordDiagnostic("SWIFT: importing converter bridge", outputDirectory: outputDirectory)\n                let bridge = Python.import("converter_bridge")\n                self.recordDiagnostic("SWIFT: converter bridge imported", outputDirectory: outputDirectory)'
-          if old not in source:
-              raise SystemExit("Could not locate converter bridge import for GIL protection")
-          source = source.replace(old, new, 1)
-          source = source.replace(
-              'let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [',
-              'self.recordDiagnostic("SWIFT: calling converter bridge", outputDirectory: outputDirectory)\n                let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [',
-              1,
-          )
-          source = source.replace(
-              'input.lastPathComponent\n                ])',
-              'input.lastPathComponent\n                ])',
-              1,
-          )
-          if 'Python.withGil { Python.import("converter_bridge") }' not in source:
-              raise SystemExit("GIL-protected bridge import was not applied")
-          if 'let raw = try Python.withGil { try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [' not in source:
-              raise SystemExit("GIL-protected conversion call was not applied")
+
+          # Always remove the unsupported Python.withGil calls if the project
+          # archive or an earlier patch introduced them.
+          source = source.replace('Python.withGil { Python.import("converter_bridge") }',
+                                  'Python.import("converter_bridge")')
+          source = source.replace('let raw = try Python.withGil { try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [',
+                                  'let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: [')
+          source = source.replace('input.lastPathComponent\n                ]) }',
+                                  'input.lastPathComponent\n                ])')
+
+          bridge_line = '                let bridge = Python.import("converter_bridge")'
+          if bridge_line not in source:
+              raise SystemExit("Could not locate converter bridge import in PythonConverter.swift")
+          if 'SWIFT: importing converter bridge' not in source:
+              source = source.replace(bridge_line,
+                  '                self.recordDiagnostic("SWIFT: importing converter bridge", outputDirectory: outputDirectory)\n' +
+                  bridge_line + '\n' +
+                  '                self.recordDiagnostic("SWIFT: converter bridge imported", outputDirectory: outputDirectory)', 1)
+
+          call_line = '                let raw = try bridge.run_conversion.throwing.dynamicallyCall(withArguments: ['
+          if call_line not in source:
+              raise SystemExit("Could not locate converter bridge conversion call")
+          if 'SWIFT: calling converter bridge' not in source:
+              source = source.replace(call_line,
+                  '                self.recordDiagnostic("SWIFT: calling converter bridge", outputDirectory: outputDirectory)\n' +
+                  call_line, 1)
+
+          if 'Python.withGil' in source:
+              raise SystemExit("Unsupported Python.withGil call remains")
           path.write_text(source)
-          print("Applied explicit Python GIL protection around bridge import and conversion call.")
+          print("Added bridge checkpoints and removed unsupported Python.withGil calls.")
           PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
