@@ -15,6 +15,8 @@ struct ConverterView: View {
     @State private var showImporter = false
     @State private var showShareSheet = false
     @State private var isConverting = false
+    @State private var diagnosticsAvailable = false
+    @State private var showDiagnostics = false
     @State private var status = "Pumili ng Android Unity bundle (.unity3d) o ZIP file."
     @State private var errorMessage: String?
 
@@ -57,6 +59,19 @@ struct ConverterView: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                if diagnosticsAvailable {
+                    Button {
+                        showDiagnostics = true
+                    } label: {
+                        Label("I-share ang diagnostic log", systemImage: "doc.text.magnifyingglass")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .sheet(isPresented: $showDiagnostics) {
+                        ActivityView(activityItems: [diagnosticsFile])
+                    }
+                }
+
                 if let outputURL {
                     Button {
                         showShareSheet = true
@@ -83,6 +98,16 @@ struct ConverterView: View {
         .onOpenURL { url in
             importFile(url)
         }
+        .onAppear {
+            diagnosticsAvailable = FileManager.default.fileExists(atPath: diagnosticsFile.path)
+            if let log = try? String(contentsOf: diagnosticsFile, encoding: .utf8),
+               log.contains("=== CONVERSION STARTED ==="),
+               !log.contains("=== RESULT: SUCCESS ==="),
+               !log.contains("=== RESULT: ERROR ===") {
+                let lastLine = log.split(separator: "\n").last.map(String.init) ?? "Walang huling progress message."
+                status = "Biglang natigil ang huling conversion. Huling detalye: \(lastLine)"
+            }
+        }
         .sheet(isPresented: $showImporter) {
             AssetDocumentPicker { selected in
                 importFile(selected)
@@ -97,10 +122,12 @@ struct ConverterView: View {
             return
         }
 
-        status = "Ini-import ang " + selected.lastPathComponent + "…"
+        status = "Ini-import ang \(selected.lastPathComponent)…"
         errorMessage = nil
         let destinationDirectory = documents.appendingPathComponent("Imported", isDirectory: true)
 
+        // Files and other providers can give the app a security-scoped URL whose
+        // contents must be coordinated before they are copied into our container.
         DispatchQueue.global(qos: .userInitiated).async {
             let scoped = selected.startAccessingSecurityScopedResource()
             defer { if scoped { selected.stopAccessingSecurityScopedResource() } }
@@ -117,6 +144,8 @@ struct ConverterView: View {
                     do {
                         try FileManager.default.copyItem(at: readableURL, to: destination)
                     } catch {
+                        // Some providers return a coordinated URL that remains readable
+                        // only through the original security-scoped URL.
                         try FileManager.default.copyItem(at: selected, to: destination)
                     }
                     importedURL = destination
@@ -129,7 +158,7 @@ struct ConverterView: View {
             DispatchQueue.main.async {
                 if let failure {
                     status = "Hindi na-import ang file."
-                    errorMessage = "Hindi mabasa ang file mula sa Files. " + failure.localizedDescription
+                    errorMessage = "Hindi mabasa ang file mula sa Files. \(failure.localizedDescription)"
                     return
                 }
                 guard let importedURL else {
@@ -139,7 +168,7 @@ struct ConverterView: View {
                 }
                 inputURL = importedURL
                 outputURL = nil
-                status = "Handa nang i-convert: " + selected.lastPathComponent
+                status = "Handa nang i-convert: \(selected.lastPathComponent)"
             }
         }
     }
@@ -150,9 +179,13 @@ struct ConverterView: View {
         outputURL = nil
         status = "Binabasa ang shaders at kino-convert ang Unity bundles…"
         let outputDirectory = documents.appendingPathComponent("Converted", isDirectory: true)
+        try? FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let started = "=== CONVERSION STARTED ===\n\(Date().formatted())\nInput: \(inputURL.lastPathComponent)\n"
+        try? started.write(to: diagnosticsFile, atomically: true, encoding: .utf8)
         PythonConverter.shared.convert(input: inputURL, outputDirectory: outputDirectory) { result in
             DispatchQueue.main.async {
                 isConverting = false
+                diagnosticsAvailable = FileManager.default.fileExists(atPath: diagnosticsFile.path)
                 switch result {
                 case .success(let url):
                     outputURL = url
@@ -163,6 +196,11 @@ struct ConverterView: View {
                 }
             }
         }
+    }
+
+    private var diagnosticsFile: URL {
+        documents.appendingPathComponent("Converted", isDirectory: true)
+            .appendingPathComponent("conversion_diagnostics.log")
     }
 }
 
