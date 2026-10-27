@@ -65,6 +65,16 @@ jobs:
               1,
           )
           source = source.replace(
+              "        let pythonLibrary = appRoot.appendingPathComponent(\"Frameworks/Python.framework/Python\").path",
+              "        let pythonLibrary = appRoot.appendingPathComponent(\"Frameworks/Python.framework/Python\").path\n        guard FileManager.default.fileExists(atPath: pythonLibrary) else {\n            throw ConverterError.conversionFailed(\"Nawawala ang embedded Python framework: \\(pythonLibrary)\")\n        }\n        guard FileManager.default.fileExists(atPath: pythonRoot.appendingPathComponent(\"lib/python3.14\", isDirectory: true).path) else {\n            throw ConverterError.conversionFailed(\"Nawawala ang Python 3.14 standard library sa app bundle.\")\n        }\n        if dlopen(pythonLibrary, RTLD_LAZY | RTLD_GLOBAL) == nil {\n            let reason = dlerror().map { String(cString: $0) } ?? \"unknown dynamic-loader error\"\n            self.recordDiagnostic(\"SWIFT: Python framework load failed: \\(reason)\", outputDirectory: outputDirectory)\n            throw ConverterError.conversionFailed(\"Hindi ma-load ang embedded Python framework: \\(reason)\")\n        }\n        self.recordDiagnostic(\"SWIFT: Python framework and standard library files exist\", outputDirectory: outputDirectory)",
+              1,
+          )
+          source = source.replace(
+              "        setenv(\"PYTHONPATH\", \"\\(appRoot.appendingPathComponent(\"app\").path):\\(appRoot.appendingPathComponent(\"app_packages\").path)\", 1)",
+              "        let standardLibrary = pythonRoot.appendingPathComponent(\"lib/python3.14\").path\n        let dynamicModules = standardLibrary + \"/lib-dynload\"\n        let applicationPath = appRoot.appendingPathComponent(\"app\").path\n        let packagesPath = appRoot.appendingPathComponent(\"app_packages\").path\n        setenv(\"PYTHONPATH\", [standardLibrary, dynamicModules, applicationPath, packagesPath].joined(separator: \":\"), 1)\n        setenv(\"PYTHONUTF8\", \"1\", 1)\n        setenv(\"PYTHONUNBUFFERED\", \"1\", 1)\n        setenv(\"PYTHONDONTWRITEBYTECODE\", \"1\", 1)\n        setenv(\"PYTHONNOUSERSITE\", \"1\", 1)",
+              1,
+          )
+          source = source.replace(
               "        PythonLibrary.useLibrary(at: pythonLibrary)",
               "        self.recordDiagnostic(\"SWIFT: loading embedded Python framework\", outputDirectory: outputDirectory)\n        PythonLibrary.useLibrary(at: pythonLibrary)\n        self.recordDiagnostic(\"SWIFT: embedded Python framework loaded\", outputDirectory: outputDirectory)",
               1,
@@ -118,6 +128,9 @@ jobs:
               source = source.replace("    private func initializeRuntime() throws {", recorder + "    private func initializeRuntime(outputDirectory: URL) throws {")
           if source.count("recordDiagnostic(") < 7:
               raise SystemExit("Could not add iOS-to-Python diagnostic checkpoints")
+          for required in ("let dynamicModules =", "Python framework and standard library files exist", "PYTHONDONTWRITEBYTECODE"):
+              if required not in source:
+                  raise SystemExit(f"Could not configure safe embedded Python startup: {required}")
           for checkpoint in ("Python 3.14 selected", "embedded Python framework loaded", "Python sys import completed"):
               if checkpoint not in source:
                   raise SystemExit(f"Could not add Python runtime checkpoint: {checkpoint}")
