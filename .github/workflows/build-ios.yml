@@ -141,7 +141,7 @@ jobs:
           )
           source = source.replace(
               "                let bridge = Python.import(\\\"converter_bridge\\\")",
-              "                let bridgePath = appRoot.appendingPathComponent(\\\"app/converter_bridge.py\\\").path\\n                let appPackagesPath = appRoot.appendingPathComponent(\\\"app_packages\\\", isDirectory: true).path\\n                self.recordDiagnostic(\\\"SWIFT: bridge file exists=\\\\(FileManager.default.fileExists(atPath: bridgePath)); path=\\\\(bridgePath)\\\", outputDirectory: outputDirectory)\\n                self.recordDiagnostic(\\\"SWIFT: app_packages exists=\\\\(FileManager.default.fileExists(atPath: appPackagesPath)); path=\\\\(appPackagesPath)\\\", outputDirectory: outputDirectory)\\n                self.recordDiagnostic(\\\"SWIFT: importing converter bridge and Unity dependencies\\\", outputDirectory: outputDirectory)\\n                let bridge = Python.import(\\\"converter_bridge\\\")\\n                self.recordDiagnostic(\\\"SWIFT: converter bridge imported\\\", outputDirectory: outputDirectory)",
+              "                let bridgePath = appRoot.appendingPathComponent(\\\"app/converter_bridge.py\\\").path\n                let appPackagesPath = appRoot.appendingPathComponent(\\\"app_packages\\\", isDirectory: true).path\n                self.recordDiagnostic(\\\"SWIFT: bridge file exists=\\\\(FileManager.default.fileExists(atPath: bridgePath)); path=\\\\(bridgePath)\\\", outputDirectory: outputDirectory)\n                self.recordDiagnostic(\\\"SWIFT: app_packages exists=\\\\(FileManager.default.fileExists(atPath: appPackagesPath)); path=\\\\(appPackagesPath)\\\", outputDirectory: outputDirectory)\n                self.recordDiagnostic(\\\"SWIFT: importing converter bridge and Unity dependencies\\\", outputDirectory: outputDirectory)\n                let bridge = Python.import(\\\"converter_bridge\\\")\n                self.recordDiagnostic(\\\"SWIFT: converter bridge imported\\\", outputDirectory: outputDirectory)",
               1,
           )
           source = source.replace(
@@ -181,7 +181,7 @@ jobs:
           recorder = '''
               private func recordDiagnostic(_ message: String, outputDirectory: URL) {
                   let file = outputDirectory.appendingPathComponent("conversion_diagnostics.log")
-                  let line = "\\(ISO8601DateFormatter().string(from: Date())) \\(message)\\n"
+                  let line = "\\(ISO8601DateFormatter().string(from: Date())) \\(message)\n"
                   guard let data = line.data(using: .utf8) else { return }
                   if let handle = try? FileHandle(forWritingTo: file) {
                       try? handle.seekToEnd()
@@ -268,12 +268,12 @@ jobs:
               source = source.replace("from contextlib import redirect_stderr, redirect_stdout", "from contextlib import redirect_stderr, redirect_stdout\nfrom datetime import datetime", 1)
           source = source.replace(
               "    output_dir = output_zip = None\n    try:\n        parent = Path(output_path)\n        parent.mkdir(parents=True, exist_ok=True)",
-              "    output_dir = output_zip = None\n    parent = Path(output_path)\n    parent.mkdir(parents=True, exist_ok=True)\n    diagnostic = parent / \"conversion_diagnostics.log\"\n    def record(message):\n        logs.append(message)\n        if message.startswith((\"[\", \"Extracting\", \"Found \", \"Validating\", \"Validation\", \"WARNING\", \"Starting bundle\", \"Finished bundle\", \"=== RESULT:\")):\n            try:\n                with diagnostic.open(\"a\", encoding=\"utf-8\") as stream:\n                    stream.write(f\"{datetime.now().isoformat(timespec='seconds')} {message}\\n\")\n                    stream.flush()\n            except OSError:\n                pass\n    try:",
+              "    output_dir = output_zip = None\n    parent = Path(output_path)\n    parent.mkdir(parents=True, exist_ok=True)\n    diagnostic = parent / \"conversion_diagnostics.log\"\n    def record(message):\n        logs.append(message)\n        if message.startswith((\"[\", \"Extracting\", \"Found \", \"Validating\", \"Validation\", \"WARNING\", \"Starting bundle\", \"Finished bundle\", \"=== RESULT:\")):\n            try:\n                with diagnostic.open(\"a\", encoding=\"utf-8\") as stream:\n                    stream.write(f\"{datetime.now().isoformat(timespec='seconds')} {message}\n\")\n                    stream.flush()\n            except OSError:\n                pass\n    try:",
               1,
           )
           source = source.replace("logger=logs.append,\n                progress=lambda value, message: logs.append(f\"[{value:.0f}%] {message}\"))", "logger=record,\n                progress=lambda value, message: record(f\"[{value:.0f}%] {message}\"))", 1)
           source = source.replace("        final_zip = _unique_zip(parent, _output_stem(display_name))", "        record(\"=== RESULT: SUCCESS ===\")\n        final_zip = _unique_zip(parent, _output_stem(display_name))", 1)
-          source = source.replace("        logs.append(traceback.format_exc(limit=8))", "        trace = traceback.format_exc(limit=8)\n        logs.append(trace)\n        try:\n            with diagnostic.open(\"a\", encoding=\"utf-8\") as stream:\n                stream.write(f\"{datetime.now().isoformat(timespec='seconds')} === RESULT: ERROR === {exc}\\n{trace}\\n\")\n                stream.flush()\n        except OSError:\n            pass", 1)
+          source = source.replace("        logs.append(traceback.format_exc(limit=8))", "        trace = traceback.format_exc(limit=8)\n        logs.append(trace)\n        try:\n            with diagnostic.open(\"a\", encoding=\"utf-8\") as stream:\n                stream.write(f\"{datetime.now().isoformat(timespec='seconds')} === RESULT: ERROR === {exc}\n{trace}\n\")\n                stream.flush()\n        except OSError:\n            pass", 1)
           if "logger=record" not in source or "=== RESULT: SUCCESS ===" not in source:
               raise SystemExit("Could not add persistent conversion diagnostics")
           bridge.write_text(source)
@@ -484,8 +484,8 @@ jobs:
           if queue_decl in source:
               source = source.replace(
                   queue_decl,
-                  '    private var pythonWorkerThread: Thread?\\n'
-                  '    private let pythonWorkerLock = NSLock()\\n'
+                  '    private var pythonWorkerThread: Thread?\n'
+                  '    private let pythonWorkerLock = NSLock()\n'
                   '    private let pythonWorkerReady = DispatchSemaphore(value: 0)',
                   1,
               )
@@ -561,7 +561,7 @@ jobs:
 
           if "        queue.async {" in source:
               raise SystemExit("DispatchQueue still wraps embedded Python operations")
-          if "private let queue = DispatchQueue(label: \\"mlbb.converter.python\\"" in source:
+          if 'private let queue = DispatchQueue(label: "mlbb.converter.python"' in source:
               raise SystemExit("Old Python DispatchQueue property remains")
           if "self.enqueueOnPythonThread {" not in source or "PythonWorkerItem.execute" not in source:
               raise SystemExit("Dedicated-thread dispatch markers are incomplete")
@@ -583,8 +583,8 @@ jobs:
               "private func pythonWorkerMain()",
               "let keepAlivePort = Port()",
               "RunLoop.current.run(mode: .default, before: Date.distantFuture)",
-              "Python.import(\\"sys\\")",
-              "try Python.attemptImport(\\"converter_bridge\\")",
+              'Python.import("sys")',
+              'try Python.attemptImport("converter_bridge")',
           )
           missing = [item for item in required if item not in source]
           if missing:
