@@ -1,6 +1,43 @@
 from __future__ import annotations
 
 
+class _BoundedCapture:
+    """Bound captured UnityPy output so repeat conversions do not retain huge buffers."""
+    def __init__(self, limit: int = 256 * 1024):
+        from collections import deque
+        self.limit = limit
+        self.parts = deque()
+        self.length = 0
+
+    def write(self, value: str) -> int:
+        value = str(value)
+        written = len(value)
+        if len(value) >= self.limit:
+            self.parts.clear()
+            self.parts.append(value[-self.limit:])
+            self.length = self.limit
+            return written
+        if value:
+            self.parts.append(value)
+            self.length += len(value)
+        while self.length > self.limit and self.parts:
+            excess = self.length - self.limit
+            first = self.parts[0]
+            if len(first) <= excess:
+                self.parts.popleft()
+                self.length -= len(first)
+            else:
+                self.parts[0] = first[excess:]
+                self.length -= excess
+        return written
+
+    def flush(self) -> None:
+        pass
+
+    def getvalue(self) -> str:
+        return "".join(self.parts)
+
+
 def _diagnostic(output_path: str | Path, message: str) -> None:
     """Write checkpoints immediately so iOS crashes can be localized."""
     import os
@@ -87,7 +124,7 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
     import zipfile
     from contextlib import redirect_stderr, redirect_stdout
     from pathlib import Path
-    logs, capture = [], io.StringIO()
+    logs, capture = [], _BoundedCapture()
     output_dir = output_zip = None
     converter = report = None
     try:
@@ -134,31 +171,49 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
                     saved_jobs = owner.jobs
                     owner.jobs = [job]
                     try:
+                        # Validate each output as soon as it is produced.
+                        # This bounds the number of live UnityPy object graphs.
                         Converter._validate_all(owner)
                     finally:
                         owner.jobs = saved_jobs
                     super().append(job)
+                    owner._incrementally_validated.add(owner._job_key(job))
                     source = Path(job[0])
+                    if owner._cache_root is not None:
+                        try:
+                            source.unlink(missing_ok=True)
+                            owner.log(f"Validated and released temporary Android bundle: {source.name}")
+                        except OSError as exc:
+                            owner.log(f"WARNING: Could not release temporary bundle {source.name}: {exc}")
                     try:
-                        source.unlink(missing_ok=True)
-                        owner.log(f"Validated and released temporary Android bundle: {source.name}")
-                    except OSError as exc:
-                        owner.log(f"WARNING: Could not release temporary bundle {source.name}: {exc}")
+                        import gc
+                        collected = gc.collect()
+                        _diagnostic(owner.output_parent, f"incremental validation finished for {source.name}; collected {collected} objects")
+                    except Exception:
+                        pass
 
             class _SpaceSavingConverter(Converter):
                 def __init__(self, *args, **kwargs):
                     super().__init__(*args, **kwargs)
                     self._cache_root = _webdav_cache_root(self.input_path)
+                    self._incrementally_validated = set()
+                    self.jobs = _SpaceSavingJobs(self)
                     if self._cache_root is not None:
-                        self.jobs = _SpaceSavingJobs(self)
                         self.log("Low-storage mode enabled for WebDAV input.")
 
+                @staticmethod
+                def _job_key(job):
+                    return (str(job[0]), str(job[1]))
+
                 def _validate_all(self):
-                    if self._cache_root is None:
-                        return super()._validate_all()
-                    self.log("All converted bundles passed incremental validation.")
-                    shutil.rmtree(self._cache_root, ignore_errors=True)
-                    self.log("Released the remaining WebDAV input cache before ZIP creation.")
+                    jobs = list(self.jobs)
+                    if jobs and all(self._job_key(job) in self._incrementally_validated for job in jobs):
+                        self.log("All converted bundles passed incremental validation.")
+                        if self._cache_root is not None:
+                            shutil.rmtree(self._cache_root, ignore_errors=True)
+                            self.log("Released the remaining WebDAV input cache before ZIP creation.")
+                        return
+                    return super()._validate_all()
 
             _diagnostic(parent, "creating converter")
             converter = _SpaceSavingConverter(Path(input_path), Path(shader_path), parent,
