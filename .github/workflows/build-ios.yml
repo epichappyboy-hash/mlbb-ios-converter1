@@ -471,6 +471,128 @@ jobs:
               raise SystemExit("Bounded diagnostic capture did not retain the expected tail")
           print("Verified Python bridge syntax, bounded output capture, incremental validation, and post-conversion cleanup.")
           PY
+      - name: Pin embedded Python to one permanent worker thread
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("Sources/PythonConverter.swift")
+          source = path.read_text()
+
+          queue_decl = '    private let queue = DispatchQueue(label: "mlbb.converter.python", qos: .userInitiated)'
+          if queue_decl in source:
+              source = source.replace(
+                  queue_decl,
+                  '    private var pythonWorkerThread: Thread?\\n'
+                  '    private let pythonWorkerLock = NSLock()\\n'
+                  '    private let pythonWorkerReady = DispatchSemaphore(value: 0)',
+                  1,
+              )
+          elif "private var pythonWorkerThread: Thread?" not in source:
+              raise SystemExit("Could not find PythonConverter's DispatchQueue declaration")
+
+          if "        queue.async {" in source:
+              source = source.replace("        queue.async {", "        self.enqueueOnPythonThread {", 1)
+          elif "self.enqueueOnPythonThread {" not in source:
+              raise SystemExit("Could not find conversion work block to move onto the persistent Python thread")
+
+          worker_class = """\
+          private final class PythonWorkerItem: NSObject {
+              private let work: () -> Void
+
+              init(_ work: @escaping () -> Void) {
+                  self.work = work
+              }
+
+              @objc fileprivate func execute() {
+                  work()
+              }
+          }
+
+          """
+          if "private final class PythonWorkerItem: NSObject" not in source:
+              source = source.replace("final class PythonConverter {", worker_class + "final class PythonConverter {", 1)
+
+          methods = """\
+              private func enqueueOnPythonThread(_ work: @escaping () -> Void) {
+                  let thread: Thread
+                  let shouldWaitForStartup: Bool
+
+                  pythonWorkerLock.lock()
+                  if let existing = pythonWorkerThread {
+                      thread = existing
+                      shouldWaitForStartup = false
+                  } else {
+                      let newThread = Thread { [weak self] in
+                          self?.pythonWorkerMain()
+                      }
+                      newThread.name = "IshaConverter.PythonRuntime"
+                      pythonWorkerThread = newThread
+                      thread = newThread
+                      shouldWaitForStartup = true
+                      newThread.start()
+                  }
+                  pythonWorkerLock.unlock()
+
+                  if shouldWaitForStartup {
+                      pythonWorkerReady.wait()
+                  }
+
+                  let item = PythonWorkerItem(work)
+                  item.perform(#selector(PythonWorkerItem.execute), on: thread, with: nil, waitUntilDone: false)
+              }
+
+              private func pythonWorkerMain() {
+                  let keepAlivePort = Port()
+                  RunLoop.current.add(keepAlivePort, forMode: .default)
+                  pythonWorkerReady.signal()
+                  while !Thread.current.isCancelled {
+                      _ = RunLoop.current.run(mode: .default, before: Date.distantFuture)
+                  }
+              }
+
+          """
+          if "private func enqueueOnPythonThread(" not in source:
+              anchor = "    private func initializeRuntime(outputDirectory: URL) throws {"
+              if anchor not in source:
+                  raise SystemExit("Could not find patched initializeRuntime(outputDirectory:) method")
+              source = source.replace(anchor, methods + anchor, 1)
+
+          if "        queue.async {" in source:
+              raise SystemExit("DispatchQueue still wraps embedded Python operations")
+          if "private let queue = DispatchQueue(label: \\"mlbb.converter.python\\"" in source:
+              raise SystemExit("Old Python DispatchQueue property remains")
+          if "self.enqueueOnPythonThread {" not in source or "PythonWorkerItem.execute" not in source:
+              raise SystemExit("Dedicated-thread dispatch markers are incomplete")
+          if "pythonWorkerReady.signal()" not in source or "pythonWorkerReady.wait()" not in source:
+              raise SystemExit("Dedicated Python thread startup synchronization is incomplete")
+
+          path.write_text(source)
+          print("Pinned Python runtime initialization, module imports, and conversion calls to one persistent OS thread.")
+          PY
+      - name: Verify Python runtime thread affinity
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("Sources/PythonConverter.swift").read_text()
+          required = (
+              "private var pythonWorkerThread: Thread?",
+              "self.enqueueOnPythonThread {",
+              "private func pythonWorkerMain()",
+              "let keepAlivePort = Port()",
+              "RunLoop.current.run(mode: .default, before: Date.distantFuture)",
+              "Python.import(\\"sys\\")",
+              "try Python.attemptImport(\\"converter_bridge\\")",
+          )
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit("Missing Python thread-affinity protections: " + ", ".join(missing))
+          if "queue.async {" in source:
+              raise SystemExit("Python execution is still dispatched through a non-thread-affine queue")
+          print("Verified embedded Python API calls run on a persistent thread rather than interchangeable GCD workers.")
+          PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project IshaConverteriOS.xcodeproj -scheme IshaConverteriOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
