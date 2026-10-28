@@ -455,7 +455,8 @@ struct ConverterView: View {
     }
 
     private func convert() {
-        guard let inputURL else { return }
+        // Ignore rapid repeat taps before SwiftUI refreshes the disabled button.
+        guard !isConverting, let inputURL else { return }
         isConverting = true
         outputURL = nil
         status = "Preparing shaders and converting Unity bundles…"
