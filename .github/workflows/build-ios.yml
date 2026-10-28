@@ -493,7 +493,7 @@ jobs:
               if not path.is_file() or path.stat().st_size < 2048:
                   raise SystemExit(f"App icon is missing or suspiciously small: {path}")
               image = path.read_bytes()
-              if image[:8] != b"\\x89PNG\\r\\n\\x1a\\n":
+              if image[:4] != bytes([137, 80, 78, 71]):
                   raise SystemExit(f"App icon is not PNG: {path}")
               width, height = struct.unpack(">II", image[16:24])
               if (width, height) != (expected_width, expected_height):
