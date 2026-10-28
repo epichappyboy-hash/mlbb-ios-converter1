@@ -395,6 +395,64 @@ jobs:
           path.write_text(source)
           print("Added bridge checkpoints and removed unsupported Python.withGil calls.")
           PY
+      - name: Prevent reentrant conversion calls
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("Sources/PythonConverter.swift")
+          source = path.read_text()
+
+          lock_declaration = "    private let conversionStateLock = NSLock()\\n    private var conversionInProgress = false\\n"
+          if "private let conversionStateLock = NSLock()" not in source:
+              anchor = "    private var initialized = false\\n"
+              if anchor not in source:
+                  raise SystemExit("Could not find PythonConverter initialization state")
+              source = source.replace(anchor, anchor + lock_declaration, 1)
+
+          old_call = """    func convert(input: URL, outputDirectory: URL, completion: @escaping (Result<URL, Error>) -> Void) {
+                  queue.async {
+          """
+          new_call = """    func convert(input: URL, outputDirectory: URL, completion: @escaping (Result<URL, Error>) -> Void) {
+                  conversionStateLock.lock()
+                  guard !conversionInProgress else {
+                      conversionStateLock.unlock()
+                      return
+                  }
+                  conversionInProgress = true
+                  conversionStateLock.unlock()
+
+                  queue.async {
+                      defer {
+                          self.conversionStateLock.lock()
+                          self.conversionInProgress = false
+                          self.conversionStateLock.unlock()
+                      }
+          """
+          if "private let conversionStateLock = NSLock()" not in source:
+              raise SystemExit("Could not install conversion state lock")
+          if "guard !conversionInProgress else {" not in source:
+              if old_call not in source:
+                  raise SystemExit("Could not find PythonConverter.convert() entry point")
+              source = source.replace(old_call, new_call, 1)
+          if "guard !conversionInProgress else {" not in source or "self.conversionInProgress = false" not in source:
+              raise SystemExit("Repeat-conversion guard is incomplete")
+          if source.count("private let conversionStateLock = NSLock()") != 1:
+              raise SystemExit("Duplicate conversion lock declaration detected")
+          path.write_text(source)
+          print("Installed a locked, non-reentrant Python conversion gate.")
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("app/converter_bridge.py")
+          source = path.read_text()
+          compile(source, str(path), "exec")
+          for marker in ("converter = report = None", "post-conversion cleanup completed", "gc.collect()"):
+              if marker not in source:
+                  raise SystemExit(f"Missing repeat-conversion cleanup: {marker}")
+          print("Verified Python bridge cleanup and syntax.")
+          PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project IshaConverteriOS.xcodeproj -scheme IshaConverteriOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
