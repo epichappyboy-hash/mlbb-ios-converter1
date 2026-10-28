@@ -105,7 +105,7 @@ struct ConverterView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("MLBB iOS Auto Converter")
+                Text("Isha Converter iOS")
                     .font(.system(size: 23, weight: .bold, design: .rounded))
                     .foregroundColor(ConverterPalette.text)
                     .fixedSize(horizontal: false, vertical: true)
@@ -180,7 +180,7 @@ struct ConverterView: View {
                     Text("Output folder")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(ConverterPalette.text)
-                    Text(outputURL?.deletingLastPathComponent().lastPathComponent ?? "App storage / Converted")
+                    Text(outputURL?.deletingLastPathComponent().lastPathComponent ?? "App storage / Isha Converter iOS")
                         .font(.system(size: 12))
                         .foregroundColor(ConverterPalette.muted)
                         .lineLimit(1)
@@ -335,7 +335,7 @@ struct ConverterView: View {
 
     private var footer: some View {
         HStack {
-            Text("MLBB iOS AUTO CONVERTER")
+            Text("ISHA CONVERTER IOS")
             Spacer()
             Text("iOS • Memory-optimized")
         }
@@ -444,7 +444,7 @@ struct ConverterView: View {
                 }
                 guard let importedURL else {
                     status = "Could not import file."
-                    errorMessage = "No file was imported. Try Share → MLBB Converter from the Files app."
+                    errorMessage = "No file was imported. Try Share → Isha Converter iOS from the Files app."
                     return
                 }
                 inputURL = importedURL
@@ -459,7 +459,7 @@ struct ConverterView: View {
         isConverting = true
         outputURL = nil
         status = "Preparing shaders and converting Unity bundles…"
-        let outputDirectory = documents.appendingPathComponent("Converted", isDirectory: true)
+        let outputDirectory = documents.appendingPathComponent("Isha Converter iOS", isDirectory: true)
         try? FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         let started = "=== CONVERSION STARTED ===\n\(Date().formatted())\nInput: \(inputURL.lastPathComponent)\n"
         try? started.write(to: diagnosticsFile, atomically: true, encoding: .utf8)
@@ -490,7 +490,7 @@ struct ConverterView: View {
     }
 
     private var diagnosticsFile: URL {
-        documents.appendingPathComponent("Converted", isDirectory: true)
+        documents.appendingPathComponent("Isha Converter iOS", isDirectory: true)
             .appendingPathComponent("conversion_diagnostics.log")
     }
 }

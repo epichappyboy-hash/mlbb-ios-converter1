@@ -1,4 +1,4 @@
-name: Build standalone MLBB iOS Converter
+name: Build Isha Converter iOS
 on:
   push:
     branches: [main, 'fix/**']
@@ -24,11 +24,40 @@ jobs:
           lines = path.read_text().splitlines()
           output = []
           for line in lines:
+              if line == "name: MLBBConverter":
+                  output.append("name: IshaConverteriOS")
+                  continue
+              if line == "  MLBBConverter:":
+                  output.append("  IshaConverteriOS:")
+                  continue
+              if line == "        PRODUCT_NAME: MLBBConverter":
+                  output.append("        PRODUCT_NAME: IshaConverteriOS")
+                  output.append("        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon")
+                  continue
               output.append(line)
               if line.startswith("      - framework: Frameworks/") and not line.endswith("Python.framework"):
                   output.append("        link: false")
           path.write_text("\n".join(output) + "\n")
           PY
+          icon_dir="Sources/Assets.xcassets/AppIcon.appiconset"
+          mkdir -p "$icon_dir"
+          swift ../../scripts/create_isha_icon.swift "$icon_dir/AppIcon.png"
+          cat > "$icon_dir/Contents.json" <<'JSON'
+          {
+            "images": [
+              {
+                "filename": "AppIcon.png",
+                "idiom": "universal",
+                "platform": "ios",
+                "size": "1024x1024"
+              }
+            ],
+            "info": {
+              "author": "xcode",
+              "version": 1
+            }
+          }
+          JSON
           xcodegen generate
       - name: Fix PythonKit throwing and string conversion
         working-directory: reconstructed/MLBB_iOS_Converter
@@ -168,6 +197,8 @@ jobs:
           from pathlib import Path
           path = Path("Sources/Info.plist")
           data = plistlib.loads(path.read_bytes())
+          data["CFBundleDisplayName"] = "Isha Converter iOS"
+          data["CFBundleName"] = "Isha Converter iOS"
           for document_type in data.get("CFBundleDocumentTypes", []):
               document_type["CFBundleTypeRole"] = "Editor"
               document_type["LSHandlerRank"] = "Alternate"
@@ -333,12 +364,12 @@ jobs:
           PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
-        run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+        run: xcodebuild -project IshaConverteriOS.xcodeproj -scheme IshaConverteriOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
       - name: Bundle Python converter code, dependencies, and standard library
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
           set -euo pipefail
-          app="build/Build/Products/Release-iphoneos/MLBBConverter.app"
+          app="build/Build/Products/Release-iphoneos/IshaConverteriOS.app"
 
           # PythonConverter.swift adds these exact two directories to PYTHONPATH
           # under Bundle.main.bundleURL. They must be copied into the built app;
@@ -400,15 +431,27 @@ jobs:
           ditto python "$app/python"
           test -f "$app/python/lib/python3.14/encodings/__init__.py"
           test -d "$app/python/lib/python3.14/lib-dynload"
+          test -f "$app/Assets.car"
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          app = Path("build/Build/Products/Release-iphoneos/IshaConverteriOS.app")
+          data = plistlib.loads((app / "Info.plist").read_bytes())
+          if data.get("CFBundleDisplayName") != "Isha Converter iOS":
+              raise SystemExit(f"Wrong Home Screen name: {data.get('CFBundleDisplayName')}")
+          if not (app / "Assets.car").is_file():
+              raise SystemExit("Compiled app icon catalog is missing")
+          print("Verified Home Screen name and compiled app icon.")
+          PY
           echo "Verified embedded Python standard library at $app/python/lib/python3.14"
       - name: Package IPA
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
           mkdir -p package/Payload
-          cp -R build/Build/Products/Release-iphoneos/MLBBConverter.app package/Payload/
-          ditto -c -k --sequesterRsrc --keepParent package/Payload MLBB_iOS_Converter.ipa
+          cp -R build/Build/Products/Release-iphoneos/IshaConverteriOS.app package/Payload/
+          ditto -c -k --sequesterRsrc --keepParent package/Payload Isha_Converter_iOS.ipa
       - uses: actions/upload-artifact@v4
         with:
-          name: MLBB_iOS_Converter_unsigned
-          path: reconstructed/MLBB_iOS_Converter/MLBB_iOS_Converter.ipa
+          name: Isha_Converter_iOS
+          path: reconstructed/MLBB_iOS_Converter/Isha_Converter_iOS.ipa
           if-no-files-found: error

@@ -22,7 +22,7 @@ def _ensure_user_shader_folder() -> Path:
     import shutil
     from pathlib import Path
     home = Path(os.path.expanduser("~"))
-    target = home / "Documents" / "MLBB Converter" / "Shaders"
+    target = home / "Documents" / "Isha Converter iOS" / "Shaders"
     target.mkdir(parents=True, exist_ok=True)
     bundled = Path(__file__).resolve().parent / "ios_shaders"
     if bundled.is_dir():
