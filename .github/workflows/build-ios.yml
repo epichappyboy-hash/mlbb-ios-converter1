@@ -193,12 +193,31 @@ jobs:
         run: |
           cp ../../patches/MLBBConverterApp.swift Sources/MLBBConverterApp.swift
           python3 - <<'PY'
+          import os
           import plistlib
           from pathlib import Path
           path = Path("Sources/Info.plist")
           data = plistlib.loads(path.read_bytes())
           data["CFBundleDisplayName"] = "Isha Converter iOS"
           data["CFBundleName"] = "Isha Converter iOS"
+          # Increase the build number on every CI run so iOS sideload/update
+          # tooling refreshes the installed bundle rather than keeping stale icon cache.
+          data["CFBundleVersion"] = os.environ["GITHUB_RUN_NUMBER"]
+          # Explicitly register the primary app icon in the app's Info.plist.
+          # Asset catalogs already emit these keys on some targets; declaring
+          # them here makes the custom AppIcon unambiguous for iOS installation UI.
+          data["CFBundleIcons"] = {
+              "CFBundlePrimaryIcon": {
+                  "CFBundleIconFiles": ["AppIcon60x60"],
+                  "CFBundleIconName": "AppIcon"
+              }
+          }
+          data["CFBundleIcons~ipad"] = {
+              "CFBundlePrimaryIcon": {
+                  "CFBundleIconFiles": ["AppIcon60x60", "AppIcon76x76"],
+                  "CFBundleIconName": "AppIcon"
+              }
+          }
           for document_type in data.get("CFBundleDocumentTypes", []):
               document_type["CFBundleTypeRole"] = "Editor"
               document_type["LSHandlerRank"] = "Alternate"
@@ -433,15 +452,27 @@ jobs:
           test -d "$app/python/lib/python3.14/lib-dynload"
           test -f "$app/Assets.car"
           python3 - <<'PY'
+          import json
+          import os
           import plistlib
           from pathlib import Path
           app = Path("build/Build/Products/Release-iphoneos/IshaConverteriOS.app")
           data = plistlib.loads((app / "Info.plist").read_bytes())
           if data.get("CFBundleDisplayName") != "Isha Converter iOS":
               raise SystemExit(f"Wrong Home Screen name: {data.get('CFBundleDisplayName')}")
+          if data.get("CFBundleVersion") != os.environ["GITHUB_RUN_NUMBER"]:
+              raise SystemExit(f"Build number not updated: {data.get('CFBundleVersion')}")
+          primary = data.get("CFBundleIcons", {}).get("CFBundlePrimaryIcon", {})
+          if primary.get("CFBundleIconName") != "AppIcon":
+              raise SystemExit(f"Primary app icon name is not registered: {primary}")
+          if "AppIcon60x60" not in primary.get("CFBundleIconFiles", []):
+              raise SystemExit(f"Primary app icon file reference is missing: {primary}")
+          expected_icon = app / "AppIcon60x60@2x.png"
+          if not expected_icon.is_file() or expected_icon.stat().st_size < 2048:
+              raise SystemExit(f"Generated home-screen icon is missing or suspiciously small: {expected_icon}")
           if not (app / "Assets.car").is_file():
               raise SystemExit("Compiled app icon catalog is missing")
-          print("Verified Home Screen name and compiled app icon.")
+          print(f"Verified Isha Converter iOS, build {data['CFBundleVersion']}, AppIcon registration and {expected_icon.name} ({expected_icon.stat().st_size} bytes).")
           PY
           echo "Verified embedded Python standard library at $app/python/lib/python3.14"
       - name: Package IPA
