@@ -401,45 +401,48 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           path = Path("Sources/PythonConverter.swift")
-          source = path.read_text()
+          lines = path.read_text().splitlines()
 
-          lock_declaration = "    private let conversionStateLock = NSLock()\\n    private var conversionInProgress = false\\n"
-          if "private let conversionStateLock = NSLock()" not in source:
-              anchor = "    private var initialized = false\\n"
-              if anchor not in source:
+          if "    private let conversionStateLock = NSLock()" not in lines:
+              try:
+                  index = lines.index("    private var initialized = false")
+              except ValueError:
                   raise SystemExit("Could not find PythonConverter initialization state")
-              source = source.replace(anchor, anchor + lock_declaration, 1)
+              lines[index + 1:index + 1] = [
+                  "    private let conversionStateLock = NSLock()",
+                  "    private var conversionInProgress = false",
+              ]
 
-          old_call = """    func convert(input: URL, outputDirectory: URL, completion: @escaping (Result<URL, Error>) -> Void) {
-                  queue.async {
-          """
-          new_call = """    func convert(input: URL, outputDirectory: URL, completion: @escaping (Result<URL, Error>) -> Void) {
-                  conversionStateLock.lock()
-                  guard !conversionInProgress else {
-                      conversionStateLock.unlock()
-                      return
-                  }
-                  conversionInProgress = true
-                  conversionStateLock.unlock()
-
-                  queue.async {
-                      defer {
-                          self.conversionStateLock.lock()
-                          self.conversionInProgress = false
-                          self.conversionStateLock.unlock()
-                      }
-          """
-          if "private let conversionStateLock = NSLock()" not in source:
-              raise SystemExit("Could not install conversion state lock")
-          if "guard !conversionInProgress else {" not in source:
-              if old_call not in source:
+          if "        guard !conversionInProgress else {" not in lines:
+              try:
+                  method_index = next(i for i, line in enumerate(lines) if line.startswith("    func convert(input: URL, outputDirectory: URL,"))
+                  queue_index = next(i for i in range(method_index + 1, len(lines)) if lines[i] == "        queue.async {")
+              except StopIteration:
                   raise SystemExit("Could not find PythonConverter.convert() entry point")
-              source = source.replace(old_call, new_call, 1)
-          if "guard !conversionInProgress else {" not in source or "self.conversionInProgress = false" not in source:
-              raise SystemExit("Repeat-conversion guard is incomplete")
-          if source.count("private let conversionStateLock = NSLock()") != 1:
+              lines[queue_index:queue_index] = [
+                  "        conversionStateLock.lock()",
+                  "        guard !conversionInProgress else {",
+                  "            conversionStateLock.unlock()",
+                  "            return",
+                  "        }",
+                  "        conversionInProgress = true",
+                  "        conversionStateLock.unlock()",
+                  "",
+              ]
+              queue_index = next(i for i in range(method_index + 1, len(lines)) if lines[i] == "        queue.async {")
+              lines[queue_index + 1:queue_index + 1] = [
+                  "            defer {",
+                  "                self.conversionStateLock.lock()",
+                  "                self.conversionInProgress = false",
+                  "                self.conversionStateLock.unlock()",
+                  "            }",
+              ]
+
+          if lines.count("    private let conversionStateLock = NSLock()") != 1:
               raise SystemExit("Duplicate conversion lock declaration detected")
-          path.write_text(source)
+          if "        guard !conversionInProgress else {" not in lines or "                self.conversionInProgress = false" not in lines:
+              raise SystemExit("Repeat-conversion guard is incomplete")
+          path.write_text(chr(10).join(lines) + chr(10))
           print("Installed a locked, non-reentrant Python conversion gate.")
           PY
 
