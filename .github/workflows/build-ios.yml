@@ -25,6 +25,10 @@ jobs:
           output = []
           has_target_family = any("TARGETED_DEVICE_FAMILY:" in line for line in lines)
           for line in lines:
+              if line.strip().startswith("PRODUCT_BUNDLE_IDENTIFIER:"):
+                  indent = line[:len(line) - len(line.lstrip())]
+                  output.append(indent + "PRODUCT_BUNDLE_IDENTIFIER: com.isha.converter.ios")
+                  continue
               if line.strip().startswith("TARGETED_DEVICE_FAMILY:"):
                   indent = line[:len(line) - len(line.lstrip())]
                   output.append(indent + 'TARGETED_DEVICE_FAMILY: "1,2"')
@@ -69,6 +73,11 @@ jobs:
           grep -q 'TARGETED_DEVICE_FAMILY = "1,2"' IshaConverteriOS.xcodeproj/project.pbxproj || {
             echo "Expected a universal iPhone+iPad target family in the generated project."
             grep -n 'TARGETED_DEVICE_FAMILY' IshaConverteriOS.xcodeproj/project.pbxproj || true
+            exit 1
+          }
+          grep -q 'PRODUCT_BUNDLE_IDENTIFIER = com.isha.converter.ios;' IshaConverteriOS.xcodeproj/project.pbxproj || {
+            echo "Expected the new Isha bundle identifier in the generated project."
+            grep -n 'PRODUCT_BUNDLE_IDENTIFIER' IshaConverteriOS.xcodeproj/project.pbxproj || true
             exit 1
           }
       - name: Fix PythonKit throwing and string conversion
@@ -212,8 +221,9 @@ jobs:
           data = plistlib.loads(path.read_bytes())
           data["CFBundleDisplayName"] = "Isha Converter iOS"
           data["CFBundleName"] = "Isha Converter iOS"
-          # Increase the build number on every CI run so iOS sideload/update
-          # tooling refreshes the installed bundle rather than keeping stale icon cache.
+          # Use a new bundle ID to force iOS to register this as a fresh app
+          # instead of reusing the prior app's cached generic placeholder icon.
+          data["CFBundleIdentifier"] = "com.isha.converter.ios"
           data["CFBundleVersion"] = os.environ["GITHUB_RUN_NUMBER"]
           # The archived project's Info.plist contains a stale iPad icon override.
           # Remove icon declarations from the SOURCE plist; Xcode must regenerate
@@ -478,36 +488,27 @@ jobs:
               raise SystemExit(f"Wrong Home Screen name: {data.get('CFBundleDisplayName')}")
           if data.get("CFBundleVersion") != os.environ["GITHUB_RUN_NUMBER"]:
               raise SystemExit(f"Build number not updated: {data.get('CFBundleVersion')}")
-          # Register the primary icon through concrete bundle image files. The
-          # source AppIcon asset remains in Assets.car, but the installed app still
-          # shows the generic placeholder in the app switcher. Explicitly enumerate
-          # the actual image-file variants instead of relying only on the asset name.
-          iphone_files = ["AppIcon60x60@2x", "AppIcon60x60@3x"]
-          ipad_files = ["AppIcon76x76@2x~ipad", "AppIcon83.5x83.5@2x~ipad"]
-          data.pop("CFBundleIconName", None)
-          data.pop("CFBundleIconFiles", None)
-          data["CFBundleIcons"] = {
-              "CFBundlePrimaryIcon": {"CFBundleIconFiles": iphone_files}
-          }
-          data["CFBundleIcons~ipad"] = {
-              "CFBundlePrimaryIcon": {"CFBundleIconFiles": ipad_files}
-          }
-          (app / "Info.plist").write_bytes(plistlib.dumps(data))
-          data = plistlib.loads((app / "Info.plist").read_bytes())
+          # Confirm Xcode registered the AppIcon asset catalog. Do not overwrite
+          # CFBundleIcons manually: iOS relies on the asset-name registration, and
+          # scale-independent CFBundleIconFiles base names for legacy bundle readers.
+          if data.get("CFBundleIdentifier") != "com.isha.converter.ios":
+              raise SystemExit(f"Wrong installed bundle ID: {data.get('CFBundleIdentifier')}")
           icons = data.get("CFBundleIcons", {})
           primary = icons.get("CFBundlePrimaryIcon", {})
-          if "CFBundleIconName" in primary:
-              raise SystemExit(f"File-based iPhone icon still has CFBundleIconName: {primary}")
-          if primary.get("CFBundleIconFiles") != iphone_files:
-              raise SystemExit(f"File-based iPhone icon names were not persisted: {primary}")
+          expected_iphone_files = ["AppIcon60x60"]
+          if primary.get("CFBundleIconName") != "AppIcon":
+              raise SystemExit(f"Xcode did not register AppIcon in the primary icon metadata: {primary}")
+          if primary.get("CFBundleIconFiles") != expected_iphone_files:
+              raise SystemExit(f"Unexpected iPhone CFBundleIconFiles; expected scale-independent base names {expected_iphone_files}: {primary}")
           ipad_icons = data.get("CFBundleIcons~ipad", {})
           ipad_primary = ipad_icons.get("CFBundlePrimaryIcon", {})
-          if "CFBundleIconName" in ipad_primary:
-              raise SystemExit(f"File-based iPad icon still has CFBundleIconName: {ipad_primary}")
-          if ipad_primary.get("CFBundleIconFiles") != ipad_files:
-              raise SystemExit(f"File-based iPad icon names were not persisted: {ipad_primary}")
-          print(f"File-based iPhone CFBundleIcons: {json.dumps(icons, sort_keys=True)}")
-          print(f"File-based iPad CFBundleIcons~ipad: {json.dumps(ipad_icons, sort_keys=True)}")
+          expected_ipad_files = ["AppIcon60x60", "AppIcon76x76"]
+          if ipad_primary.get("CFBundleIconName") != "AppIcon":
+              raise SystemExit(f"Xcode did not register the iPad AppIcon: {ipad_primary}")
+          if ipad_primary.get("CFBundleIconFiles") != expected_ipad_files:
+              raise SystemExit(f"Unexpected iPad CFBundleIconFiles; expected base names {expected_ipad_files}: {ipad_primary}")
+          print(f"Xcode-generated iPhone CFBundleIcons: {json.dumps(icons, sort_keys=True)}")
+          print(f"Xcode-generated iPad CFBundleIcons~ipad: {json.dumps(ipad_icons, sort_keys=True)}")
           icon_files = [
               ("AppIcon60x60@2x.png", 120, 120),
               ("AppIcon60x60@3x.png", 180, 180),
@@ -526,7 +527,7 @@ jobs:
                   raise SystemExit(f"Wrong dimensions for {filename}: {width}x{height}")
           if not (app / "Assets.car").is_file():
               raise SystemExit("Compiled app icon catalog is missing")
-          print(f"Verified Isha Converter iOS, build {data['CFBundleVersion']}, file-based primary icons for iPhone + iPad, and resolution variants: {', '.join(name for name, _, _ in icon_files)}.")
+          print(f"Verified fresh Isha bundle ID {data['CFBundleIdentifier']}, Xcode-generated AppIcon metadata with scale-independent file names, and resolution variants: {', '.join(name for name, _, _ in icon_files)}.")
           PY
           echo "Verified embedded Python standard library at $app/python/lib/python3.14"
       - name: Package IPA
@@ -548,10 +549,15 @@ jobs:
               plist = plistlib.loads(z.read(root + "Info.plist"))
               if plist.get("CFBundleDisplayName") != "Isha Converter iOS":
                   raise SystemExit("Final IPA has the wrong display name")
+              if plist.get("CFBundleIdentifier") != "com.isha.converter.ios":
+                  raise SystemExit(f"Final IPA has the old/unexpected bundle ID: {plist.get('CFBundleIdentifier')}")
               primary = plist.get("CFBundleIcons", {}).get("CFBundlePrimaryIcon", {})
-              expected = ["AppIcon60x60@2x", "AppIcon60x60@3x"]
-              if "CFBundleIconName" in primary or primary.get("CFBundleIconFiles") != expected:
-                  raise SystemExit(f"Final IPA lost file-based primary icon metadata: {primary}")
+              expected = ["AppIcon60x60"]
+              if primary.get("CFBundleIconName") != "AppIcon" or primary.get("CFBundleIconFiles") != expected:
+                  raise SystemExit(f"Final IPA has incorrect Xcode app icon metadata: {primary}")
+              ipad_primary = plist.get("CFBundleIcons~ipad", {}).get("CFBundlePrimaryIcon", {})
+              if ipad_primary.get("CFBundleIconName") != "AppIcon" or ipad_primary.get("CFBundleIconFiles") != ["AppIcon60x60", "AppIcon76x76"]:
+                  raise SystemExit(f"Final IPA has incorrect iPad icon metadata: {ipad_primary}")
               for filename, width, height in [
                   ("AppIcon60x60@2x.png", 120, 120),
                   ("AppIcon60x60@3x.png", 180, 180),
@@ -562,7 +568,7 @@ jobs:
                   actual = struct.unpack(">II", raw[16:24])
                   if actual != (width, height):
                       raise SystemExit(f"Final IPA icon dimensions wrong: {filename}: {actual}")
-              print("Verified final IPA contains explicit file-based iPhone icon metadata and 2x/3x custom PNGs.")
+              print("Verified final IPA has a fresh bundle ID, Xcode AppIcon registration, and correctly named 2x/3x custom PNGs.")
               print(f"Final IPA primary icon metadata: {primary}")
           PY
       - uses: actions/upload-artifact@v4
