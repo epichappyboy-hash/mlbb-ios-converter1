@@ -478,23 +478,36 @@ jobs:
               raise SystemExit(f"Wrong Home Screen name: {data.get('CFBundleDisplayName')}")
           if data.get("CFBundleVersion") != os.environ["GITHUB_RUN_NUMBER"]:
               raise SystemExit(f"Build number not updated: {data.get('CFBundleVersion')}")
+          # Register the primary icon through concrete bundle image files. The
+          # source AppIcon asset remains in Assets.car, but the installed app still
+          # shows the generic placeholder in the app switcher. Explicitly enumerate
+          # the actual image-file variants instead of relying only on the asset name.
+          iphone_files = ["AppIcon60x60@2x", "AppIcon60x60@3x"]
+          ipad_files = ["AppIcon76x76@2x~ipad", "AppIcon83.5x83.5@2x~ipad"]
+          data.pop("CFBundleIconName", None)
+          data.pop("CFBundleIconFiles", None)
+          data["CFBundleIcons"] = {
+              "CFBundlePrimaryIcon": {"CFBundleIconFiles": iphone_files}
+          }
+          data["CFBundleIcons~ipad"] = {
+              "CFBundlePrimaryIcon": {"CFBundleIconFiles": ipad_files}
+          }
+          (app / "Info.plist").write_bytes(plistlib.dumps(data))
+          data = plistlib.loads((app / "Info.plist").read_bytes())
           icons = data.get("CFBundleIcons", {})
           primary = icons.get("CFBundlePrimaryIcon", {})
-          # These values must come from actool, not plistlib-injected icon keys.
-          if primary.get("CFBundleIconName") != "AppIcon":
-              raise SystemExit(f"Xcode did not register AppIcon as the primary iPhone icon: {primary}")
-          primary_files = primary.get("CFBundleIconFiles", [])
-          if not primary_files:
-              raise SystemExit(f"Xcode did not generate iPhone CFBundleIconFiles: {primary}")
+          if "CFBundleIconName" in primary:
+              raise SystemExit(f"File-based iPhone icon still has CFBundleIconName: {primary}")
+          if primary.get("CFBundleIconFiles") != iphone_files:
+              raise SystemExit(f"File-based iPhone icon names were not persisted: {primary}")
           ipad_icons = data.get("CFBundleIcons~ipad", {})
           ipad_primary = ipad_icons.get("CFBundlePrimaryIcon", {})
-          if ipad_primary.get("CFBundleIconName") != "AppIcon":
-              raise SystemExit(f"Xcode did not register AppIcon as the primary iPad icon: {ipad_primary}")
-          ipad_files = ipad_primary.get("CFBundleIconFiles", [])
-          if not ipad_files:
-              raise SystemExit(f"Xcode did not generate iPad CFBundleIconFiles: {ipad_primary}")
-          print(f"Xcode-generated iPhone CFBundleIcons: {json.dumps(icons, sort_keys=True)}")
-          print(f"Xcode-generated iPad CFBundleIcons~ipad: {json.dumps(ipad_icons, sort_keys=True)}")
+          if "CFBundleIconName" in ipad_primary:
+              raise SystemExit(f"File-based iPad icon still has CFBundleIconName: {ipad_primary}")
+          if ipad_primary.get("CFBundleIconFiles") != ipad_files:
+              raise SystemExit(f"File-based iPad icon names were not persisted: {ipad_primary}")
+          print(f"File-based iPhone CFBundleIcons: {json.dumps(icons, sort_keys=True)}")
+          print(f"File-based iPad CFBundleIcons~ipad: {json.dumps(ipad_icons, sort_keys=True)}")
           icon_files = [
               ("AppIcon60x60@2x.png", 120, 120),
               ("AppIcon60x60@3x.png", 180, 180),
@@ -513,15 +526,45 @@ jobs:
                   raise SystemExit(f"Wrong dimensions for {filename}: {width}x{height}")
           if not (app / "Assets.car").is_file():
               raise SystemExit("Compiled app icon catalog is missing")
-          print(f"Verified Isha Converter iOS, build {data['CFBundleVersion']}, Xcode-generated iPhone + iPad AppIcon metadata, and resolution variants: {', '.join(name for name, _, _ in icon_files)}.")
+          print(f"Verified Isha Converter iOS, build {data['CFBundleVersion']}, file-based primary icons for iPhone + iPad, and resolution variants: {', '.join(name for name, _, _ in icon_files)}.")
           PY
           echo "Verified embedded Python standard library at $app/python/lib/python3.14"
       - name: Package IPA
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
+          set -euo pipefail
           mkdir -p package/Payload
           cp -R build/Build/Products/Release-iphoneos/IshaConverteriOS.app package/Payload/
           ditto -c -k --sequesterRsrc --keepParent package/Payload Isha_Converter_iOS.ipa
+
+          # Validate the final IPA, not only the pre-archive app bundle.
+          python3 - <<'PY'
+          import plistlib
+          import struct
+          import zipfile
+          ipa = "Isha_Converter_iOS.ipa"
+          root = "Payload/IshaConverteriOS.app/"
+          with zipfile.ZipFile(ipa) as z:
+              plist = plistlib.loads(z.read(root + "Info.plist"))
+              if plist.get("CFBundleDisplayName") != "Isha Converter iOS":
+                  raise SystemExit("Final IPA has the wrong display name")
+              primary = plist.get("CFBundleIcons", {}).get("CFBundlePrimaryIcon", {})
+              expected = ["AppIcon60x60@2x", "AppIcon60x60@3x"]
+              if "CFBundleIconName" in primary or primary.get("CFBundleIconFiles") != expected:
+                  raise SystemExit(f"Final IPA lost file-based primary icon metadata: {primary}")
+              for filename, width, height in [
+                  ("AppIcon60x60@2x.png", 120, 120),
+                  ("AppIcon60x60@3x.png", 180, 180),
+              ]:
+                  raw = z.read(root + filename)
+                  if raw[:4] != bytes([137, 80, 78, 71]):
+                      raise SystemExit(f"Final IPA icon is not PNG: {filename}")
+                  actual = struct.unpack(">II", raw[16:24])
+                  if actual != (width, height):
+                      raise SystemExit(f"Final IPA icon dimensions wrong: {filename}: {actual}")
+              print("Verified final IPA contains explicit file-based iPhone icon metadata and 2x/3x custom PNGs.")
+              print(f"Final IPA primary icon metadata: {primary}")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: Isha_Converter_iOS
