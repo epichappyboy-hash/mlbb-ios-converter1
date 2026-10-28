@@ -5,7 +5,7 @@ let canvas: CGFloat = 1024
 let outputURL = URL(fileURLWithPath: CommandLine.arguments[1])
 let bitmap = NSBitmapImageRep(
     bitmapDataPlanes: nil, pixelsWide: Int(canvas), pixelsHigh: Int(canvas),
-    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: false, isPlanar: false,
+    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
 )!
 let context = NSGraphicsContext(bitmapImageRep: bitmap)!
