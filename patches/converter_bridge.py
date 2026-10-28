@@ -78,6 +78,7 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
     from pathlib import Path
     logs, capture = [], io.StringIO()
     output_dir = output_zip = None
+    converter = report = None
     try:
         parent = Path(output_path)
         parent.mkdir(parents=True, exist_ok=True)
@@ -180,3 +181,16 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
         _diagnostic(output_path, f"conversion error: {type(exc).__name__}: {exc}")
         _diagnostic(output_path, traceback.format_exc(limit=12))
         return json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}", "logs": logs[-120:]})
+    finally:
+        # UnityPy/Pillow keep sizable object graphs alive during bundle conversion.
+        # Drop the converter/report references before collecting so a later
+        # conversion doesn't inherit memory pressure from the previous one.
+        converter = None
+        report = None
+        capture = None
+        try:
+            import gc
+            collected = gc.collect()
+            _diagnostic(output_path, f"post-conversion cleanup completed; collected {collected} objects")
+        except Exception:
+            pass
