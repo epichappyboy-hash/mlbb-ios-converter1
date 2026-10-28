@@ -214,7 +214,7 @@ jobs:
           }
           data["CFBundleIcons~ipad"] = {
               "CFBundlePrimaryIcon": {
-                  "CFBundleIconFiles": ["AppIcon60x60", "AppIcon76x76"],
+                  "CFBundleIconFiles": ["AppIcon60x60", "AppIcon76x76", "AppIcon83.5x83.5"],
                   "CFBundleIconName": "AppIcon"
               }
           }
@@ -451,10 +451,22 @@ jobs:
           test -f "$app/python/lib/python3.14/encodings/__init__.py"
           test -d "$app/python/lib/python3.14/lib-dynload"
           test -f "$app/Assets.car"
+
+          # Generate explicit device-resolution icons in the app bundle too.
+          # The previous IPA only contained the 2x iPhone file; 3x iPhones then
+          # displayed the generic iOS placeholder in the app switcher.
+          icon_source="Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
+          test -f "$icon_source"
+          sips -s format png -z 120 120 "$icon_source" --out "$app/AppIcon60x60@2x.png" >/dev/null
+          sips -s format png -z 180 180 "$icon_source" --out "$app/AppIcon60x60@3x.png" >/dev/null
+          sips -s format png -z 152 152 "$icon_source" --out "$app/AppIcon76x76@2x~ipad.png" >/dev/null
+          sips -s format png -z 167 167 "$icon_source" --out "$app/AppIcon83.5x83.5@2x~ipad.png" >/dev/null
+
           python3 - <<'PY'
           import json
           import os
           import plistlib
+          import struct
           from pathlib import Path
           app = Path("build/Build/Products/Release-iphoneos/IshaConverteriOS.app")
           data = plistlib.loads((app / "Info.plist").read_bytes())
@@ -467,12 +479,28 @@ jobs:
               raise SystemExit(f"Primary app icon name is not registered: {primary}")
           if "AppIcon60x60" not in primary.get("CFBundleIconFiles", []):
               raise SystemExit(f"Primary app icon file reference is missing: {primary}")
-          expected_icon = app / "AppIcon60x60@2x.png"
-          if not expected_icon.is_file() or expected_icon.stat().st_size < 2048:
-              raise SystemExit(f"Generated home-screen icon is missing or suspiciously small: {expected_icon}")
+          icon_files = [
+              ("AppIcon60x60@2x.png", 120, 120),
+              ("AppIcon60x60@3x.png", 180, 180),
+              ("AppIcon76x76@2x~ipad.png", 152, 152),
+              ("AppIcon83.5x83.5@2x~ipad.png", 167, 167),
+          ]
+          primary_files = primary.get("CFBundleIconFiles", [])
+          if "AppIcon60x60" not in primary_files:
+              raise SystemExit(f"Primary iPhone icon name is not registered: {primary_files}")
+          for filename, expected_width, expected_height in icon_files:
+              path = app / filename
+              if not path.is_file() or path.stat().st_size < 2048:
+                  raise SystemExit(f"App icon is missing or suspiciously small: {path}")
+              image = path.read_bytes()
+              if image[:8] != b"\\x89PNG\\r\\n\\x1a\\n":
+                  raise SystemExit(f"App icon is not PNG: {path}")
+              width, height = struct.unpack(">II", image[16:24])
+              if (width, height) != (expected_width, expected_height):
+                  raise SystemExit(f"Wrong dimensions for {filename}: {width}x{height}")
           if not (app / "Assets.car").is_file():
               raise SystemExit("Compiled app icon catalog is missing")
-          print(f"Verified Isha Converter iOS, build {data['CFBundleVersion']}, AppIcon registration and {expected_icon.name} ({expected_icon.stat().st_size} bytes).")
+          print(f"Verified Isha Converter iOS, build {data['CFBundleVersion']}, registered primary icon and all resolution variants: {', '.join(name for name, _, _ in icon_files)}.")
           PY
           echo "Verified embedded Python standard library at $app/python/lib/python3.14"
       - name: Package IPA
