@@ -451,10 +451,25 @@ jobs:
           path = Path("app/converter_bridge.py")
           source = path.read_text()
           compile(source, str(path), "exec")
-          for marker in ("converter = report = None", "post-conversion cleanup completed", "gc.collect()"):
+          for marker in (
+              "converter = report = None",
+              "post-conversion cleanup completed",
+              "gc.collect()",
+              "class _BoundedCapture:",
+              "logs, capture = [], _BoundedCapture()",
+              "self.jobs = _SpaceSavingJobs(self)",
+              "owner._incrementally_validated.add(owner._job_key(job))",
+          ):
               if marker not in source:
-                  raise SystemExit(f"Missing repeat-conversion cleanup: {marker}")
-          print("Verified Python bridge cleanup and syntax.")
+                  raise SystemExit(f"Missing repeated-conversion memory fix: {marker}")
+          import sys
+          sys.path.insert(0, str(path.parent))
+          import converter_bridge
+          capture = converter_bridge._BoundedCapture(limit=64)
+          capture.write("A" * 100)
+          if capture.getvalue() != "A" * 64:
+              raise SystemExit("Bounded diagnostic capture did not retain the expected tail")
+          print("Verified Python bridge syntax, bounded output capture, incremental validation, and post-conversion cleanup.")
           PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
