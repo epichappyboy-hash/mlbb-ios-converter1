@@ -168,6 +168,13 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
 
                 def append(self, job):
                     owner = self.owner
+                    # Reclaim cyclic objects left by _convert_bundle before opening
+                    # another pair of UnityPy source/output environments for validation.
+                    try:
+                        import gc
+                        gc.collect()
+                    except Exception:
+                        pass
                     saved_jobs = owner.jobs
                     owner.jobs = [job]
                     try:
