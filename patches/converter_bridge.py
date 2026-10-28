@@ -66,12 +66,12 @@ def _ensure_user_shader_folder() -> Path:
         sources = list(bundled.glob("*.unity3d"))
         # Replace existing Documents copies once when the updated shader bundle
         # first runs. Later runs only recreate missing files, preserving user edits.
-        migration_marker = target / ".isha_shader_bundle_v2"
+        migration_marker = target / ".isha_shader_bundle_v3"
         if sources and not migration_marker.exists():
             for source in sources:
                 shutil.copy2(source, target / source.name)
             temporary_marker = migration_marker.with_suffix(".tmp")
-            temporary_marker.write_text("v2\\n", encoding="utf-8")
+            temporary_marker.write_text("v3", encoding="utf-8")
             temporary_marker.replace(migration_marker)
         else:
             for source in sources:

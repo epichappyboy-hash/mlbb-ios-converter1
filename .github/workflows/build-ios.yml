@@ -459,6 +459,7 @@ jobs:
               "logs, capture = [], _BoundedCapture()",
               "self.jobs = _SpaceSavingJobs(self)",
               "owner._incrementally_validated.add(owner._job_key(job))",
+              '.isha_shader_bundle_v3',
           ):
               if marker not in source:
                   raise SystemExit(f"Missing repeated-conversion memory fix: {marker}")
