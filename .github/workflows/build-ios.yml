@@ -594,6 +594,38 @@ jobs:
               raise SystemExit("Python execution is still dispatched through a non-thread-affine queue")
           print("Verified embedded Python API calls run on a persistent thread rather than interchangeable GCD workers.")
           PY
+      - name: Verify server-backed Isha license gate
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          app = Path("../../patches/MLBBConverterApp.swift").read_text()
+          validator = Path("../../license-system/supabase/functions/validate-license/index.ts").read_text()
+          admin = Path("../../license-system/supabase/functions/admin-licenses/index.ts").read_text()
+          dashboard = Path("../../license-system/admin/index.html").read_text()
+          migration = Path("../../license-system/supabase/migrations/202610290001_isha_license_system.sql").read_text()
+
+          app_markers = (
+              "private enum IshaLicenseConfiguration",
+              "IshaLicenseService.validate(normalizedKey)",
+              ".disabled(!isLicenseActive || isValidating)",
+              "IshaLicenseSecureStorage",
+              "https://YOUR_PROJECT_REF.supabase.co/functions/v1/validate-license",
+          )
+          missing = [marker for marker in app_markers if marker not in app]
+          if missing:
+              raise SystemExit("Missing fail-closed iOS license gate markers: " + ", ".join(missing))
+          if "Continue to converter" not in app or "LICENSE SERVER NOT CONFIGURED" not in app:
+              raise SystemExit("License screen must visibly require server verification.")
+          if "SUPABASE_SERVICE_ROLE_KEY" in dashboard or "SUPABASE_SECRET_KEY" in dashboard:
+              raise SystemExit("A server secret must never appear in the browser admin page.")
+          if "ADMIN_EMAILS" not in admin or "verify_isha_license" not in validator:
+              raise SystemExit("Server-side admin allowlist or database verification call is missing.")
+          if "revoke all on table public.isha_licenses from public, anon, authenticated" not in migration:
+              raise SystemExit("License records must not be directly accessible to client roles.")
+          print("Verified fail-closed app gate, secure admin allowlist, server-side hash validation, and database access restrictions.")
+          PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project IshaConverteriOS.xcodeproj -scheme IshaConverteriOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build

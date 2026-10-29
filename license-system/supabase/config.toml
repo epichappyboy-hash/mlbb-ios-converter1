@@ -1,0 +1,7 @@
+project_id = "isha-converter-license"
+
+[functions.validate-license]
+# The native app sends a publishable key and the function performs the license check.
+verify_jwt = false
+
+# admin-licenses uses the default JWT gateway check and a second server-side email allowlist.
