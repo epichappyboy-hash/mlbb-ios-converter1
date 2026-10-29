@@ -12,11 +12,12 @@ struct MLBBConverterApp: App {
 
 private struct VerdeAppRootView: View {
     @State private var hasContinuedToConverter = false
+    @State private var pendingOpenURL: URL?
 
     var body: some View {
         Group {
             if hasContinuedToConverter {
-                ConverterView()
+                ConverterView(initialURL: pendingOpenURL)
             } else {
                 VerdeLicenseActivationView {
                     hasContinuedToConverter = true
@@ -24,6 +25,13 @@ private struct VerdeAppRootView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onOpenURL { url in
+            // Preserve a file opened from Files while the license screen is displayed.
+            // ConverterView retains its own onOpenURL handler for later file imports.
+            if !hasContinuedToConverter {
+                pendingOpenURL = url
+            }
+        }
     }
 }
 
@@ -333,8 +341,14 @@ private enum ConverterPalette {
 }
 
 struct ConverterView: View {
+    private let initialURL: URL?
+    @State private var didImportInitialURL = false
     @State private var inputURL: URL?
     @State private var outputURL: URL?
+
+    init(initialURL: URL? = nil) {
+        self.initialURL = initialURL
+    }
     @State private var showImporter = false
     @State private var showShareSheet = false
     @State private var isConverting = false
@@ -394,6 +408,10 @@ struct ConverterView: View {
                !log.contains("=== RESULT: ERROR ===") {
                 let lastLine = log.split(separator: "\n").last.map(String.init) ?? "No last progress message."
                 status = "Previous conversion stopped. Last detail: \(lastLine)"
+            }
+            if let initialURL, !didImportInitialURL {
+                didImportInitialURL = true
+                importFile(initialURL)
             }
         }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
