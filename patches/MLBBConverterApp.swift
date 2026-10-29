@@ -137,7 +137,7 @@ private enum IshaLicenseService {
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "license_key": key,
             "device_id": IshaLicenseSecureStorage.deviceIdentifier,
-            "device_name": UIDevice.current.model
+            "device_name": "iOS device"
         ])
 
         let data: Data
@@ -246,6 +246,7 @@ private struct IshaLicenseActivationView: View {
     private let panel = ConverterPalette.panel
     private let muted = ConverterPalette.muted
     private let blue = ConverterPalette.blue
+    private let green = ConverterPalette.green
 
     var body: some View {
         ZStack {
