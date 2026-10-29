@@ -256,11 +256,6 @@ private struct IshaLicenseActivationView: View {
                 VStack(spacing: 22) {
                     heroCard
                     activationCard
-                    Text("ISHA CONVERTER IOS")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .tracking(1.5)
-                        .foregroundColor(muted.opacity(0.65))
-                        .padding(.top, 2)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 16)
@@ -268,20 +263,6 @@ private struct IshaLicenseActivationView: View {
                 .frame(maxWidth: 620)
                 .frame(maxWidth: .infinity)
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            bottomDock
-                .padding(.horizontal, 22)
-                .padding(.top, 8)
-                .padding(.bottom, 7)
-                .background(
-                    LinearGradient(
-                        colors: [background.opacity(0), background.opacity(0.96), background],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea(edges: .bottom)
-                )
         }
         .preferredColorScheme(.dark)
     }
@@ -484,36 +465,7 @@ private struct IshaLicenseActivationView: View {
         }
     }
 
-    private var bottomDock: some View {
-        HStack(spacing: 0) {
-            dockIcon("house.fill", selected: true)
-            dockIcon("tshirt.fill")
-            dockIcon("arrow.down.circle.fill")
-            dockIcon("list.bullet")
-            dockIcon("folder.fill")
-            dockIcon("info.circle.fill")
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 70)
-        .background(
-            Capsule()
-                .fill(ConverterPalette.panel.opacity(0.98))
-        )
-        .overlay(
-            Capsule().stroke(ConverterPalette.muted.opacity(0.22), lineWidth: 1.2)
-        )
-        .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Isha Converter iOS navigation bar")
-    }
 
-    private func dockIcon(_ symbol: String, selected: Bool = false) -> some View {
-        Image(systemName: symbol)
-            .font(.system(size: 27, weight: .semibold))
-            .foregroundColor(selected ? ConverterPalette.blue : ConverterPalette.muted.opacity(0.95))
-            .frame(maxWidth: .infinity, minHeight: 56)
-            .accessibilityHidden(true)
-    }
 }
 
 private enum ConverterPalette {
