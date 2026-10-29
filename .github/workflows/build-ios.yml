@@ -802,6 +802,39 @@ jobs:
               print("Verified final IPA has a fresh bundle ID, Xcode AppIcon registration, and correctly named 2x/3x custom PNGs.")
               print(f"Final IPA primary icon metadata: {primary}")
           PY
+      - name: Package license system source ZIP
+        run: |
+          set -euo pipefail
+          zip -qr Isha_License_System_Source.zip license-system
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          path = Path("Isha_License_System_Source.zip")
+          required = {
+              "license-system/README.md",
+              "license-system/admin/index.html",
+              "license-system/supabase/config.toml",
+              "license-system/supabase/migrations/202610290001_isha_license_system.sql",
+              "license-system/supabase/functions/validate-license/index.ts",
+              "license-system/supabase/functions/admin-licenses/index.ts",
+          }
+          with zipfile.ZipFile(path) as archive:
+              actual = set(archive.namelist())
+              missing = required - actual
+              if missing:
+                  raise SystemExit("License source archive is missing: " + ", ".join(sorted(missing)))
+              bad = archive.testzip()
+              if bad:
+                  raise SystemExit("License source ZIP failed CRC validation at " + bad)
+          print(f"Verified license source ZIP: {path.stat().st_size} bytes")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Isha_License_System_Source
+          path: Isha_License_System_Source.zip
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@v4
         with:
           name: Isha_Converter_iOS
