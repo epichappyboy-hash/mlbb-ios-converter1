@@ -611,7 +611,7 @@ jobs:
               "IshaLicenseService.validate(normalizedKey)",
               ".disabled(!isLicenseActive || isValidating)",
               "IshaLicenseSecureStorage",
-              "https://YOUR_PROJECT_REF.supabase.co/functions/v1/validate-license",
+              "https://gbeljybcfdpgzstffrsw.supabase.co/functions/v1/validate-license",
           )
           missing = [marker for marker in app_markers if marker not in app]
           if missing:
