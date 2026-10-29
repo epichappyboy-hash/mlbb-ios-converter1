@@ -6,11 +6,11 @@ import Combine
 @main
 struct MLBBConverterApp: App {
     var body: some Scene {
-        WindowGroup { VerdeAppRootView() }
+        WindowGroup { IshaAppRootView() }
     }
 }
 
-private struct VerdeAppRootView: View {
+private struct IshaAppRootView: View {
     @State private var hasContinuedToConverter = false
     @State private var pendingOpenURL: URL?
 
@@ -19,7 +19,7 @@ private struct VerdeAppRootView: View {
             if hasContinuedToConverter {
                 ConverterView(initialURL: pendingOpenURL)
             } else {
-                VerdeLicenseActivationView {
+                IshaLicenseActivationView {
                     hasContinuedToConverter = true
                 }
             }
@@ -35,7 +35,7 @@ private struct VerdeAppRootView: View {
     }
 }
 
-private struct VerdeLicenseActivationView: View {
+private struct IshaLicenseActivationView: View {
     let onContinue: () -> Void
 
     @State private var licenseKey = ""
@@ -43,12 +43,12 @@ private struct VerdeLicenseActivationView: View {
     @State private var messageIsError = false
     @FocusState private var keyFieldFocused: Bool
 
-    private let background = Color(red: 9 / 255, green: 13 / 255, blue: 48 / 255)
-    private let panel = Color(red: 27 / 255, green: 35 / 255, blue: 79 / 255)
-    private let muted = Color(red: 160 / 255, green: 167 / 255, blue: 205 / 255)
-    private let purple = Color(red: 128 / 255, green: 79 / 255, blue: 255 / 255)
-    private let green = Color(red: 71 / 255, green: 222 / 255, blue: 166 / 255)
-    private let gold = Color(red: 248 / 255, green: 190 / 255, blue: 64 / 255)
+    private let background = ConverterPalette.background
+    private let panel = ConverterPalette.panel
+    private let muted = ConverterPalette.muted
+    private let blue = ConverterPalette.blue
+    private let green = ConverterPalette.green
+    private let textColor = ConverterPalette.text
 
     var body: some View {
         ZStack {
@@ -58,7 +58,7 @@ private struct VerdeLicenseActivationView: View {
                 VStack(spacing: 22) {
                     heroCard
                     activationCard
-                    Text("VERDE  •  MLBB SKIN TOOLS")
+                    Text("ISHA CONVERTER IOS")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .tracking(1.5)
                         .foregroundColor(muted.opacity(0.65))
@@ -89,106 +89,64 @@ private struct VerdeLicenseActivationView: View {
     }
 
     private var heroCard: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 15) {
             ZStack {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [purple.opacity(0.52), Color.clear],
-                            center: .center,
-                            startRadius: 10,
-                            endRadius: 105
-                        )
-                    )
-                    .frame(width: 190, height: 190)
-
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [gold, Color(red: 0.76, green: 0.43, blue: 0.12)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                RoundedRectangle(cornerRadius: 34, style: .continuous)
+                    .fill(ConverterPalette.field)
                     .frame(width: 150, height: 150)
-                    .shadow(color: gold.opacity(0.23), radius: 12, y: 5)
-
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(red: 0.08, green: 0.19, blue: 0.17), Color(red: 0.015, green: 0.045, blue: 0.08)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 34, style: .continuous)
+                            .stroke(ConverterPalette.blue.opacity(0.55), lineWidth: 2)
                     )
-                    .frame(width: 136, height: 136)
+                    .shadow(color: ConverterPalette.blue.opacity(0.20), radius: 18, y: 7)
 
-                Circle()
-                    .stroke(Color(red: 0.16, green: 0.43, blue: 0.29), lineWidth: 3)
-                    .frame(width: 116, height: 116)
-
-                Image(systemName: "leaf.fill")
-                    .font(.system(size: 69, weight: .regular))
+                Image(systemName: "arrow.left.arrow.right.square")
+                    .font(.system(size: 76, weight: .semibold))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [Color(red: 0.65, green: 0.98, blue: 0.34), Color(red: 0.12, green: 0.62, blue: 0.27)],
+                            colors: [ConverterPalette.blue, ConverterPalette.green],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
-                    .rotationEffect(.degrees(-25))
-                    .shadow(color: Color.green.opacity(0.35), radius: 7, y: 2)
-                    .offset(x: 3, y: 1)
-
-                Image(systemName: "leaf.fill")
-                    .font(.system(size: 31, weight: .regular))
-                    .foregroundColor(Color(red: 0.39, green: 0.88, blue: 0.30))
-                    .rotationEffect(.degrees(36))
-                    .offset(x: -24, y: -17)
             }
-            .frame(height: 176)
+            .frame(height: 164)
             .accessibilityHidden(true)
 
-            Text("Verde MLBB iOS Skin Converter")
-                .font(.system(size: 25, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+            Text("Isha Converter iOS")
+                .font(.system(size: 27, weight: .bold, design: .rounded))
+                .foregroundColor(ConverterPalette.text)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
-                .padding(.horizontal, 6)
+
+            Text("Android → iOS Unity bundle converter")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(ConverterPalette.muted)
+                .multilineTextAlignment(.center)
+
+            Text("Exact ShaderVariants matching")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(ConverterPalette.green)
+                .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 28)
+        .padding(.vertical, 25)
         .frame(maxWidth: .infinity)
         .frame(minHeight: 315)
         .background(
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [
-                            Color(red: 0.39, green: 0.23, blue: 0.98),
-                            Color(red: 0.68, green: 0.20, blue: 0.87),
-                            Color(red: 0.98, green: 0.39, blue: 0.43),
-                            Color(red: 0.17, green: 0.19, blue: 0.47)
-                        ],
+                        colors: [ConverterPalette.panel, ConverterPalette.field],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 34, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.12), Color.clear, Color.black.opacity(0.20)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .stroke(ConverterPalette.muted.opacity(0.16), lineWidth: 1)
         )
     }
 
@@ -205,7 +163,7 @@ private struct VerdeLicenseActivationView: View {
                 .foregroundColor(muted)
                 .multilineTextAlignment(.center)
 
-            TextField("VERDE-LIFEA-XXXX-XXXX", text: $licenseKey)
+            TextField("ISHA-LICENSE-XXXX-XXXX", text: $licenseKey)
                 .font(.system(size: 17, weight: .medium, design: .monospaced))
                 .foregroundColor(.white)
                 .textInputAutocapitalization(.characters)
@@ -238,29 +196,29 @@ private struct VerdeLicenseActivationView: View {
                     .frame(maxWidth: .infinity, minHeight: 65)
                     .background(
                         LinearGradient(
-                            colors: [Color(red: 0.43, green: 0.31, blue: 0.98), Color(red: 0.58, green: 0.31, blue: 0.98)],
+                            colors: [ConverterPalette.blue, ConverterPalette.blue.opacity(0.78)],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .shadow(color: purple.opacity(0.20), radius: 10, y: 5)
+                    .shadow(color: blue.opacity(0.20), radius: 10, y: 5)
             }
             .buttonStyle(.plain)
 
             Text(activationMessage)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(messageIsError ? Color(red: 1.0, green: 0.68, blue: 0.56) : muted)
+                .foregroundColor(messageIsError ? ConverterPalette.red : muted)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 4)
 
             HStack(spacing: 8) {
-                Circle().fill(gold).frame(width: 7, height: 7)
+                Circle().fill(blue).frame(width: 7, height: 7)
                 Text("LICENSE SERVER NOT CONNECTED")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .tracking(1.0)
-                    .foregroundColor(Color(red: 0.70, green: 0.62, blue: 1.0))
+                    .foregroundColor(blue.opacity(0.95))
             }
             .padding(.top, -3)
 
@@ -274,7 +232,7 @@ private struct VerdeLicenseActivationView: View {
                         Capsule()
                             .fill(
                                 LinearGradient(
-                                    colors: [Color(red: 0.43, green: 0.31, blue: 0.98), Color(red: 0.49, green: 0.32, blue: 0.94)],
+                                    colors: [ConverterPalette.blue, ConverterPalette.blue.opacity(0.78)],
                                     startPoint: .leading,
                                     endPoint: .trailing
                                 )
@@ -293,7 +251,7 @@ private struct VerdeLicenseActivationView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .stroke(Color(red: 0.22, green: 0.27, blue: 0.50), lineWidth: 1.2)
+                .stroke(ConverterPalette.muted.opacity(0.16), lineWidth: 1.2)
         )
     }
 
@@ -310,20 +268,20 @@ private struct VerdeLicenseActivationView: View {
         .frame(height: 70)
         .background(
             Capsule()
-                .fill(Color(red: 0.10, green: 0.13, blue: 0.31).opacity(0.97))
+                .fill(ConverterPalette.panel.opacity(0.98))
         )
         .overlay(
-            Capsule().stroke(Color(red: 0.25, green: 0.30, blue: 0.57).opacity(0.85), lineWidth: 1.2)
+            Capsule().stroke(ConverterPalette.muted.opacity(0.22), lineWidth: 1.2)
         )
         .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Verde navigation bar")
+        .accessibilityLabel("Isha Converter iOS navigation bar")
     }
 
     private func dockIcon(_ symbol: String, selected: Bool = false) -> some View {
         Image(systemName: symbol)
             .font(.system(size: 27, weight: .semibold))
-            .foregroundColor(selected ? Color.white : muted.opacity(0.95))
+            .foregroundColor(selected ? ConverterPalette.blue : ConverterPalette.muted.opacity(0.95))
             .frame(maxWidth: .infinity, minHeight: 56)
             .accessibilityHidden(true)
     }
