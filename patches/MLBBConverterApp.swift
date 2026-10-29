@@ -7,8 +7,8 @@ import Security
 private enum IshaLicenseConfiguration {
     // Set these two values after deploying the Supabase functions.
     // The publishable key is intended for client use. NEVER put a secret/service-role key here.
-    static let validationURL = "https://YOUR_PROJECT_REF.supabase.co/functions/v1/validate-license"
-    static let publishableKey = "YOUR_SUPABASE_PUBLISHABLE_KEY"
+    static let validationURL = "https://gbeljybcfdpgzstffrsw.supabase.co/functions/v1/validate-license"
+    static let publishableKey = "sb_publishable_ENErOce9koor0imL34c4sg_3n2SjrIx"
 
     static var isConfigured: Bool {
         guard let url = URL(string: validationURL),
