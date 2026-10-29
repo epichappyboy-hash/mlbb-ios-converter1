@@ -2,6 +2,164 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 import Combine
+import Security
+
+private enum IshaLicenseConfiguration {
+    // Set these two values after deploying the Supabase functions.
+    // The publishable key is intended for client use. NEVER put a secret/service-role key here.
+    static let validationURL = "https://YOUR_PROJECT_REF.supabase.co/functions/v1/validate-license"
+    static let publishableKey = "YOUR_SUPABASE_PUBLISHABLE_KEY"
+
+    static var isConfigured: Bool {
+        guard let url = URL(string: validationURL),
+              url.scheme == "https",
+              let host = url.host,
+              !host.contains("YOUR_PROJECT_REF"),
+              !publishableKey.contains("YOUR_SUPABASE_PUBLISHABLE_KEY"),
+              publishableKey.hasPrefix("sb_publishable_") || publishableKey.count > 30 else {
+            return false
+        }
+        return true
+    }
+}
+
+private struct IshaLicenseValidationResponse: Decodable {
+    let ok: Bool
+    let message: String?
+    let expiresAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case message
+        case expiresAt = "expires_at"
+    }
+}
+
+private enum IshaLicenseServiceError: LocalizedError {
+    case notConfigured
+    case rejected(String)
+    case connection
+
+    var errorDescription: String? {
+        switch self {
+        case .notConfigured:
+            return "License verification is not configured yet. Add your Supabase project URL and publishable key."
+        case .rejected(let message):
+            return message
+        case .connection:
+            return "Couldn't reach the license server. Check your internet connection and try again."
+        }
+    }
+}
+
+private enum IshaLicenseSecureStorage {
+    private static let service = Bundle.main.bundleIdentifier ?? "com.isha.converter.ios"
+    private static let licenseAccount = "isha.saved-license-key"
+    private static let deviceAccount = "isha.device-identifier"
+
+    static var savedLicenseKey: String? {
+        read(account: licenseAccount)
+    }
+
+    static var deviceIdentifier: String {
+        if let existing = read(account: deviceAccount) {
+            return existing
+        }
+        let generated = UUID().uuidString.lowercased()
+        write(generated, account: deviceAccount)
+        return generated
+    }
+
+    static func saveLicenseKey(_ key: String) {
+        write(key, account: licenseAccount)
+    }
+
+    static func clearLicenseKey() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: licenseAccount
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    private static func read(account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return value
+    }
+
+    private static func write(_ value: String, account: String) {
+        let baseQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(baseQuery as CFDictionary)
+        guard let data = value.data(using: .utf8) else { return }
+        var query = baseQuery
+        query[kSecValueData as String] = data
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(query as CFDictionary, nil)
+    }
+}
+
+private enum IshaLicenseService {
+    static func validate(_ rawKey: String) async throws -> IshaLicenseValidationResponse {
+        guard IshaLicenseConfiguration.isConfigured,
+              let url = URL(string: IshaLicenseConfiguration.validationURL) else {
+            throw IshaLicenseServiceError.notConfigured
+        }
+
+        let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !key.isEmpty else {
+            throw IshaLicenseServiceError.rejected("Enter your license key first.")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.setValue(IshaLicenseConfiguration.publishableKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "license_key": key,
+            "device_id": IshaLicenseSecureStorage.deviceIdentifier,
+            "device_name": UIDevice.current.model
+        ])
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw IshaLicenseServiceError.connection
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw IshaLicenseServiceError.connection
+        }
+        guard let decoded = try? JSONDecoder().decode(IshaLicenseValidationResponse.self, from: data) else {
+            throw IshaLicenseServiceError.rejected("The license server returned an unreadable response.")
+        }
+        guard (200..<300).contains(http.statusCode), decoded.ok else {
+            throw IshaLicenseServiceError.rejected(decoded.message ?? "This license key is invalid, expired, or revoked.")
+        }
+        return decoded
+    }
+}
 
 @main
 struct MLBBConverterApp: App {
@@ -12,12 +170,15 @@ struct MLBBConverterApp: App {
 
 private struct IshaAppRootView: View {
     @State private var hasContinuedToConverter = false
+    @State private var didCheckSavedLicense = false
     @State private var pendingOpenURL: URL?
 
     var body: some View {
         Group {
             if hasContinuedToConverter {
                 ConverterView(initialURL: pendingOpenURL)
+            } else if !didCheckSavedLicense {
+                IshaLicenseLoadingView()
             } else {
                 IshaLicenseActivationView {
                     hasContinuedToConverter = true
@@ -25,11 +186,45 @@ private struct IshaAppRootView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .task {
+            await checkSavedLicense()
+        }
         .onOpenURL { url in
-            // Preserve a file opened from Files while the license screen is displayed.
-            // ConverterView retains its own onOpenURL handler for later file imports.
             if !hasContinuedToConverter {
                 pendingOpenURL = url
+            }
+        }
+    }
+
+    @MainActor
+    private func checkSavedLicense() async {
+        guard !didCheckSavedLicense else { return }
+        if let savedKey = IshaLicenseSecureStorage.savedLicenseKey {
+            do {
+                let result = try await IshaLicenseService.validate(savedKey)
+                if result.ok {
+                    hasContinuedToConverter = true
+                } else {
+                    IshaLicenseSecureStorage.clearLicenseKey()
+                }
+            } catch {
+                // Fail closed: if the server cannot confirm a saved license, do not unlock the app.
+                IshaLicenseSecureStorage.clearLicenseKey()
+            }
+        }
+        didCheckSavedLicense = true
+    }
+}
+
+private struct IshaLicenseLoadingView: View {
+    var body: some View {
+        ZStack {
+            ConverterPalette.background.ignoresSafeArea()
+            VStack(spacing: 14) {
+                ProgressView().tint(ConverterPalette.blue)
+                Text("Checking license…")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(ConverterPalette.muted)
             }
         }
     }
@@ -39,8 +234,12 @@ private struct IshaLicenseActivationView: View {
     let onContinue: () -> Void
 
     @State private var licenseKey = ""
-    @State private var activationMessage = "License verification is not connected in this build."
+    @State private var activationMessage = IshaLicenseConfiguration.isConfigured
+        ? "Enter your license key to activate this device."
+        : "License server setup is required before keys can be verified."
     @State private var messageIsError = false
+    @State private var isValidating = false
+    @State private var isLicenseActive = false
     @FocusState private var keyFieldFocused: Bool
 
     private let background = ConverterPalette.background
@@ -180,14 +379,9 @@ private struct IshaLicenseActivationView: View {
 
             Button {
                 keyFieldFocused = false
-                if licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    activationMessage = "Please enter the license key you received."
-                } else {
-                    activationMessage = "The key has not been verified. Connect a license server to enable activation."
-                }
-                messageIsError = true
+                Task { await activateLicense() }
             } label: {
-                Text("ACTIVATE")
+                Text(isValidating ? "VERIFYING…" : "ACTIVATE")
                     .font(.system(size: 19, weight: .bold, design: .rounded))
                     .tracking(0.4)
                     .foregroundColor(.white)
@@ -203,6 +397,8 @@ private struct IshaLicenseActivationView: View {
                     .shadow(color: blue.opacity(0.20), radius: 10, y: 5)
             }
             .buttonStyle(.plain)
+            .disabled(isValidating || licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .opacity(isValidating || licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.72 : 1)
 
             Text(activationMessage)
                 .font(.system(size: 14, weight: .medium))
@@ -212,11 +408,13 @@ private struct IshaLicenseActivationView: View {
                 .padding(.top, 4)
 
             HStack(spacing: 8) {
-                Circle().fill(blue).frame(width: 7, height: 7)
-                Text("LICENSE SERVER NOT CONNECTED")
+                Circle().fill(isLicenseActive ? green : blue).frame(width: 7, height: 7)
+                Text(isLicenseActive
+                    ? "LICENSE ACTIVE ON THIS DEVICE"
+                    : (IshaLicenseConfiguration.isConfigured ? "KEY VERIFICATION REQUIRED" : "LICENSE SERVER NOT CONFIGURED"))
                     .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .tracking(1.0)
-                    .foregroundColor(blue.opacity(0.95))
+                    .tracking(0.7)
+                    .foregroundColor(isLicenseActive ? green : blue.opacity(0.95))
             }
             .padding(.top, -3)
 
@@ -238,6 +436,8 @@ private struct IshaLicenseActivationView: View {
                     )
             }
             .buttonStyle(.plain)
+            .disabled(!isLicenseActive || isValidating)
+            .opacity(!isLicenseActive || isValidating ? 0.48 : 1)
             .padding(.top, 1)
         }
         .padding(.horizontal, 22)
@@ -251,6 +451,36 @@ private struct IshaLicenseActivationView: View {
             RoundedRectangle(cornerRadius: 32, style: .continuous)
                 .stroke(ConverterPalette.muted.opacity(0.16), lineWidth: 1.2)
         )
+    }
+
+    @MainActor
+    private func activateLicense() async {
+        guard !isValidating else { return }
+        let normalizedKey = licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !normalizedKey.isEmpty else {
+            activationMessage = "Enter your license key first."
+            messageIsError = true
+            isLicenseActive = false
+            return
+        }
+
+        isValidating = true
+        messageIsError = false
+        activationMessage = "Contacting license server…"
+        defer { isValidating = false }
+
+        do {
+            let result = try await IshaLicenseService.validate(normalizedKey)
+            IshaLicenseSecureStorage.saveLicenseKey(normalizedKey)
+            isLicenseActive = true
+            messageIsError = false
+            activationMessage = result.message ?? "License active on this device."
+        } catch {
+            IshaLicenseSecureStorage.clearLicenseKey()
+            isLicenseActive = false
+            messageIsError = true
+            activationMessage = error.localizedDescription
+        }
     }
 
     private var bottomDock: some View {
