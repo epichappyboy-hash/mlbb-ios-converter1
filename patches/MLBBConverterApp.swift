@@ -47,8 +47,6 @@ private struct IshaLicenseActivationView: View {
     private let panel = ConverterPalette.panel
     private let muted = ConverterPalette.muted
     private let blue = ConverterPalette.blue
-    private let green = ConverterPalette.green
-    private let textColor = ConverterPalette.text
 
     var body: some View {
         ZStack {
@@ -172,11 +170,11 @@ private struct IshaLicenseActivationView: View {
                 .focused($keyFieldFocused)
                 .padding(.horizontal, 17)
                 .frame(height: 60)
-                .background(Color(red: 13 / 255, green: 19 / 255, blue: 58 / 255))
+                .background(ConverterPalette.field)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color(red: 0.26, green: 0.31, blue: 0.58), lineWidth: 1)
+                        .stroke(ConverterPalette.muted.opacity(0.20), lineWidth: 1)
                 )
                 .accessibilityLabel("License key")
 
