@@ -6,7 +6,318 @@ import Combine
 @main
 struct MLBBConverterApp: App {
     var body: some Scene {
-        WindowGroup { ConverterView() }
+        WindowGroup { VerdeAppRootView() }
+    }
+}
+
+private struct VerdeAppRootView: View {
+    @State private var hasContinuedToConverter = false
+
+    var body: some View {
+        Group {
+            if hasContinuedToConverter {
+                ConverterView()
+            } else {
+                VerdeLicenseActivationView {
+                    hasContinuedToConverter = true
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct VerdeLicenseActivationView: View {
+    let onContinue: () -> Void
+
+    @State private var licenseKey = ""
+    @State private var activationMessage = "License verification is not connected in this build."
+    @State private var messageIsError = false
+    @FocusState private var keyFieldFocused: Bool
+
+    private let background = Color(red: 9 / 255, green: 13 / 255, blue: 48 / 255)
+    private let panel = Color(red: 27 / 255, green: 35 / 255, blue: 79 / 255)
+    private let muted = Color(red: 160 / 255, green: 167 / 255, blue: 205 / 255)
+    private let purple = Color(red: 128 / 255, green: 79 / 255, blue: 255 / 255)
+    private let green = Color(red: 71 / 255, green: 222 / 255, blue: 166 / 255)
+    private let gold = Color(red: 248 / 255, green: 190 / 255, blue: 64 / 255)
+
+    var body: some View {
+        ZStack {
+            background.ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 22) {
+                    heroCard
+                    activationCard
+                    Text("VERDE  •  MLBB SKIN TOOLS")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .tracking(1.5)
+                        .foregroundColor(muted.opacity(0.65))
+                        .padding(.top, 2)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 28)
+                .frame(maxWidth: 620)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            bottomDock
+                .padding(.horizontal, 22)
+                .padding(.top, 8)
+                .padding(.bottom, 7)
+                .background(
+                    LinearGradient(
+                        colors: [background.opacity(0), background.opacity(0.96), background],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                )
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var heroCard: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [purple.opacity(0.52), Color.clear],
+                            center: .center,
+                            startRadius: 10,
+                            endRadius: 105
+                        )
+                    )
+                    .frame(width: 190, height: 190)
+
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [gold, Color(red: 0.76, green: 0.43, blue: 0.12)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 150, height: 150)
+                    .shadow(color: gold.opacity(0.23), radius: 12, y: 5)
+
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(red: 0.08, green: 0.19, blue: 0.17), Color(red: 0.015, green: 0.045, blue: 0.08)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 136, height: 136)
+
+                Circle()
+                    .stroke(Color(red: 0.16, green: 0.43, blue: 0.29), lineWidth: 3)
+                    .frame(width: 116, height: 116)
+
+                Image(systemName: "leaf.fill")
+                    .font(.system(size: 69, weight: .regular))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color(red: 0.65, green: 0.98, blue: 0.34), Color(red: 0.12, green: 0.62, blue: 0.27)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .rotationEffect(.degrees(-25))
+                    .shadow(color: Color.green.opacity(0.35), radius: 7, y: 2)
+                    .offset(x: 3, y: 1)
+
+                Image(systemName: "leaf.fill")
+                    .font(.system(size: 31, weight: .regular))
+                    .foregroundColor(Color(red: 0.39, green: 0.88, blue: 0.30))
+                    .rotationEffect(.degrees(36))
+                    .offset(x: -24, y: -17)
+            }
+            .frame(height: 176)
+            .accessibilityHidden(true)
+
+            Text("Verde MLBB iOS Skin Converter")
+                .font(.system(size: 25, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, 6)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 28)
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 315)
+        .background(
+            RoundedRectangle(cornerRadius: 34, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.39, green: 0.23, blue: 0.98),
+                            Color(red: 0.68, green: 0.20, blue: 0.87),
+                            Color(red: 0.98, green: 0.39, blue: 0.43),
+                            Color(red: 0.17, green: 0.19, blue: 0.47)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 34, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.12), Color.clear, Color.black.opacity(0.20)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 34, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private var activationCard: some View {
+        VStack(spacing: 17) {
+            Text("Activate your license")
+                .font(.system(size: 27, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+                .padding(.top, 4)
+
+            Text("Enter the key you received")
+                .font(.system(size: 16))
+                .foregroundColor(muted)
+                .multilineTextAlignment(.center)
+
+            TextField("VERDE-LIFEA-XXXX-XXXX", text: $licenseKey)
+                .font(.system(size: 17, weight: .medium, design: .monospaced))
+                .foregroundColor(.white)
+                .textInputAutocapitalization(.characters)
+                .autocorrectionDisabled()
+                .keyboardType(.asciiCapable)
+                .focused($keyFieldFocused)
+                .padding(.horizontal, 17)
+                .frame(height: 60)
+                .background(Color(red: 13 / 255, green: 19 / 255, blue: 58 / 255))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color(red: 0.26, green: 0.31, blue: 0.58), lineWidth: 1)
+                )
+                .accessibilityLabel("License key")
+
+            Button {
+                keyFieldFocused = false
+                if licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    activationMessage = "Please enter the license key you received."
+                } else {
+                    activationMessage = "The key has not been verified. Connect a license server to enable activation."
+                }
+                messageIsError = true
+            } label: {
+                Text("ACTIVATE")
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .tracking(0.4)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, minHeight: 65)
+                    .background(
+                        LinearGradient(
+                            colors: [Color(red: 0.43, green: 0.31, blue: 0.98), Color(red: 0.58, green: 0.31, blue: 0.98)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .shadow(color: purple.opacity(0.20), radius: 10, y: 5)
+            }
+            .buttonStyle(.plain)
+
+            Text(activationMessage)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(messageIsError ? Color(red: 1.0, green: 0.68, blue: 0.56) : muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+
+            HStack(spacing: 8) {
+                Circle().fill(gold).frame(width: 7, height: 7)
+                Text("LICENSE SERVER NOT CONNECTED")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .tracking(1.0)
+                    .foregroundColor(Color(red: 0.70, green: 0.62, blue: 1.0))
+            }
+            .padding(.top, -3)
+
+            Button(action: onContinue) {
+                Text("Continue to converter")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .frame(minHeight: 52)
+                    .background(
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(red: 0.43, green: 0.31, blue: 0.98), Color(red: 0.49, green: 0.32, blue: 0.94)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                    )
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 1)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 24)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .fill(panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .stroke(Color(red: 0.22, green: 0.27, blue: 0.50), lineWidth: 1.2)
+        )
+    }
+
+    private var bottomDock: some View {
+        HStack(spacing: 0) {
+            dockIcon("house.fill", selected: true)
+            dockIcon("tshirt.fill")
+            dockIcon("arrow.down.circle.fill")
+            dockIcon("list.bullet")
+            dockIcon("folder.fill")
+            dockIcon("info.circle.fill")
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 70)
+        .background(
+            Capsule()
+                .fill(Color(red: 0.10, green: 0.13, blue: 0.31).opacity(0.97))
+        )
+        .overlay(
+            Capsule().stroke(Color(red: 0.25, green: 0.30, blue: 0.57).opacity(0.85), lineWidth: 1.2)
+        )
+        .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Verde navigation bar")
+    }
+
+    private func dockIcon(_ symbol: String, selected: Bool = false) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 27, weight: .semibold))
+            .foregroundColor(selected ? Color.white : muted.opacity(0.95))
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .accessibilityHidden(true)
     }
 }
 
