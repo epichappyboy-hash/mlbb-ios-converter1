@@ -105,7 +105,7 @@ jobs:
           info["CFBundleExecutable"] = "IshaConverteriOS"
           info["CFBundlePackageType"] = "APPL"
           info["CFBundleShortVersionString"] = "1.4"
-          info["CFBundleVersion"] = "73"
+          info["CFBundleVersion"] = "74"
           info["MinimumOSVersion"] = "15.0"
           info["CFBundleIconName"] = "AppIcon"
 
@@ -208,106 +208,85 @@ jobs:
           converter = Path("app/mlbb_ios_converter.py")
           source = converter.read_text()
 
-          # The generated converter receives the quality selected by the Swift UI.
-          # High is the default for clean installs and direct bridge calls.
-          if "texture_quality: str =" not in source:
+          # High is the default for clean installs and direct converter calls.
+          quality_line = '    texture_quality: str = "balanced"\n'
+          high_line = '    texture_quality: str = "high"\n'
+          if quality_line in source:
+              source = source.replace(quality_line, high_line, 1)
+          elif high_line not in source:
               options_line = "    preserve_shadows: bool = True\n"
               if source.count(options_line) != 1:
                   raise SystemExit("Could not find ConvertOptions fields")
-              source = source.replace(
-                  options_line,
-                  options_line + '    texture_quality: str = "high"\n',
-                  1,
-              )
-          else:
-              source, count = re.subn(
-                  r'(?m)^(    texture_quality: str = )"[^"]+"$',
-                  r'\1"high"',
-                  source,
-                  count=1,
-              )
-              if count != 1:
-                  raise SystemExit("Could not set ConvertOptions default quality to High")
+              source = source.replace(options_line, options_line + high_line, 1)
 
-          # Do not leave pre-existing Android ASTC textures untouched at a different
-          # block size. Decode and re-encode them to the selected iOS ASTC quality.
-          astc_passthrough = re.compile(
-              r"(?m)^(?P<i>[ \t]*)if 48 <= source_format <= 59:\n"
-              r"(?P=i)    self\.stats\.textures \+= 1\n"
-              r"(?P=i)    continue\n"
-          )
-          source, passthrough_count = astc_passthrough.subn("", source, count=1)
-          if passthrough_count != 1 and "if 48 <= source_format <= 59:" in source:
-              raise SystemExit("Could not remove ASTC passthrough; source ASTC could bypass High selection")
-
-          # Every converted Texture2D is encoded through the bundled native ASTC
-          # encoder; RGBA32 is never a target format.
+          # Keep the real Texture2D image decode -> set_image -> ASTC encode
+          # path intact and change only its target format.
           target_pattern = re.compile(
-              r"(?m)^(?P<i>[ \t]*)target_format=TextureFormat\.RGBA32,$"
+              r"(?m)^(?P<indent>[ \t]*)target_format=TextureFormat\\.RGBA32,$"
           )
           def target_replacement(match):
-              i = match.group("i")
+              indent = match.group("indent")
               return (
-                  i + "target_format={\n"
-                  + i + '    "high": TextureFormat.ASTC_RGBA_4x4,\n'
-                  + i + '    "balanced": TextureFormat.ASTC_RGBA_6x6,\n'
-                  + i + '    "small": TextureFormat.ASTC_RGBA_8x8,\n'
-                  + i + "}[self.options.texture_quality],"
+                  indent + "target_format={\n"
+                  + indent + '    "high": TextureFormat.ASTC_RGBA_4x4,\n'
+                  + indent + '    "balanced": TextureFormat.ASTC_RGBA_6x6,\n'
+                  + indent + '    "small": TextureFormat.ASTC_RGBA_8x8,\n'
+                  + indent + "}[self.options.texture_quality],"
               )
           source, target_count = target_pattern.subn(target_replacement, source, count=1)
-          if target_count != 1 and "target_format=TextureFormat.RGBA32" in source:
-              raise SystemExit("Found an RGBA32 Texture2D encoder target that was not replaced")
+          if target_count != 1:
+              raise SystemExit(
+                  f"Expected exactly one RGBA32 encoder target in Texture2D.set_image; got {target_count}"
+              )
 
-          # Replace the output validator regardless of whether the earlier source
-          # accepted RGBA32 only or RGBA32 plus pre-existing ASTC.
-          validation_pattern = re.compile(
-              r'(?ms)^(?P<i>[ \t]*)elif obj\.type\.name == "Texture2D":\n'
-              r".*?(?=^[ \t]*percent = 76)"
-          )
-          validation = validation_pattern.search(source)
-          if not validation:
-              raise SystemExit("Could not locate the Texture2D output validation block")
-          i = validation.group("i")
-          replacement = "\n".join([
-              i + 'elif obj.type.name == "Texture2D":',
-              i + '    if re.search(r"(?:^|[-_])(?:red|blue)?tower(?:[-_]|$)", source.name.lower()) or "tower_fight" in source.name.lower() or "hometower" in source.name.lower():',
-              i + "        continue",
-              i + "    texture = obj.read()",
-              i + "    expected_texture_format = {",
-              i + '        "high": TextureFormat.ASTC_RGBA_4x4,',
-              i + '        "balanced": TextureFormat.ASTC_RGBA_6x6,',
-              i + '        "small": TextureFormat.ASTC_RGBA_8x8,',
-              i + "    }[self.options.texture_quality]",
-              i + "    if int(texture.m_TextureFormat) != int(expected_texture_format):",
-              i + '        raise ConversionError(f"Texture is not in selected ASTC format ({self.options.texture_quality}): {texture.m_Name}")',
-              i + '    stream = getattr(texture, "m_StreamData", None)',
-              i + "    if stream and stream.path:",
-              i + '        raise ConversionError(f"Texture stream remains: {texture.m_Name}")',
-              i + "    if self.options.full_validation:",
-              i + "        image = texture.image",
-              i + '        if image.mode != "RGBA" or image.size != (',
-              i + "            texture.m_Width,",
-              i + "            texture.m_Height,",
-              i + "        ):",
-              i + '            raise ConversionError(f"Texture validation failed: {texture.m_Name}")',
-          ]) + "\n"
-          source = source[:validation.start()] + replacement + source[validation.end():]
+          # Strict output validation lives in _validate_all, not _convert_bundle.
+          old_validation = "\n".join([
+              "                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):",
+              '                        raise ConversionError(f"Texture is not RGBA32: {texture.m_Name}")',
+          ])
+          new_validation = "\n".join([
+              "                    expected_texture_format = {",
+              '                        "high": TextureFormat.ASTC_RGBA_4x4,',
+              '                        "balanced": TextureFormat.ASTC_RGBA_6x6,',
+              '                        "small": TextureFormat.ASTC_RGBA_8x8,',
+              "                    }[self.options.texture_quality]",
+              "                    if int(texture.m_TextureFormat) != int(expected_texture_format):",
+              '                        raise ConversionError(f"Texture is not in selected ASTC format ({self.options.texture_quality}): {texture.m_Name}")',
+          ])
+          if old_validation in source:
+              source = source.replace(old_validation, new_validation, 1)
+          elif new_validation not in source:
+              raise SystemExit("Could not locate the _validate_all ASTC output validator")
 
-          if "compresslevel=9" in source:
-              source = source.replace("compresslevel=9", "compresslevel=1", 1)
+          # Guard against accidentally replacing conversion code with validation code.
+          convert_start = source.index("    def _convert_bundle(self, source: Path, target: Path):")
+          validate_start = source.index("    def _validate_all(self):", convert_start)
+          write_report_start = source.index("    def _write_report(", validate_start)
+          convert_section = source[convert_start:validate_start]
+          validate_section = source[validate_start:write_report_start]
 
+          required_conversion = [
+              "texture.set_image(",
+              "obj.save_typetree(texture)",
+              "save_unity_environment(env, source)",
+              "target.write_bytes(output_bytes)",
+              "os.replace(temp_target, target)",
+          ]
+          missing = [item for item in required_conversion if item not in convert_section]
+          if missing:
+              raise SystemExit("Texture conversion/save pipeline is incomplete: " + ", ".join(missing))
+          if "for number, (source, target) in enumerate(self.jobs, 1):" not in validate_section:
+              raise SystemExit("Bundle validation loop is missing its enumerate counter")
+          if "ASTC_RGBA_4x4" not in validate_section or "Texture is not in selected ASTC format" not in validate_section:
+              raise SystemExit("Strict ASTC output validation is missing")
+          if "target_format=TextureFormat.RGBA32" in source:
+              raise SystemExit("RGBA32 remains as a Texture2D encoder target")
           if 'texture_quality: str = "high"' not in source:
               raise SystemExit("High ASTC quality is not the converter default")
-          if "target_format=TextureFormat.RGBA32" in source:
-              raise SystemExit("RGBA32 remains as a Texture2D target format")
-          if "ASTC_RGBA_4x4" not in source or "Texture is not in selected ASTC format" not in source:
-              raise SystemExit("High ASTC selection and strict validation were not fully applied")
-          if "if 48 <= source_format <= 59:" in source:
-              raise SystemExit("ASTC passthrough can still bypass selected output quality")
 
           ast.parse(source)
           converter.write_text(source)
-          print("Verified: High uses ASTC_RGBA_4x4; no RGBA32 encoder target; strict ASTC validation.")
+          print("Verified: real Texture2D ASTC encoding and save pipeline retained; High=ASTC 4x4; strict validation; no RGBA32 target.")
           PY
           cp ../../patches/converter_bridge.py app/converter_bridge.py
           python3 -m py_compile app/converter_bridge.py app/mlbb_ios_converter.py
