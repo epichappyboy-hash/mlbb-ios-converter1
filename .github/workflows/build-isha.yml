@@ -180,7 +180,7 @@ jobs:
               output.append(line)
               if line.startswith("      - framework: Frameworks/") and not line.endswith("Python.framework"):
                   output.append("        link: false")
-          path.write_text("\\n".join(output) + "\\n")
+          path.write_text("\n".join(output) + "\n")
           PY
           xcodegen generate
 
