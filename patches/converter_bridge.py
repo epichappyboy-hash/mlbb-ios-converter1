@@ -69,7 +69,62 @@ def _webdav_cache_root(path: Path) -> Path | None:
     return Path(*resolved.parts[: marker + 2])
 
 
-def run_conversion(input_path: str, shader_path: str, output_path: str, display_name: str) -> str:
+
+_ASTC_LIBRARY = None
+
+
+def _install_ios_astc_encoder(texture_converter, texture_quality: str) -> None:
+    """Use the bundled ARM64 ASTC encoder to create real ASTC texture payloads."""
+    import ctypes
+
+    global _ASTC_LIBRARY
+    framework = (
+        Path(__file__).resolve().parents[1]
+        / "Frameworks"
+        / "AstcEncoder.framework"
+        / "AstcEncoder"
+    )
+    if not framework.is_file():
+        raise RuntimeError(f"Missing iOS ASTC encoder framework: {framework}")
+
+    library = ctypes.CDLL(str(framework))
+    encode = library.mlbb_astc_encode_rgba
+    encode.argtypes = [
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_float,
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_size_t,
+    ]
+    encode.restype = ctypes.c_int
+    _ASTC_LIBRARY = library
+
+    effort = {"high": 80.0, "balanced": 60.0, "small": 45.0}[texture_quality]
+
+    def compress_astc(data: bytes, width: int, height: int, target_texture_format) -> bytes:
+        block_size = texture_converter.TEXTURE_FORMAT_BLOCK_SIZE_TABLE[target_texture_format]
+        if block_size is None or block_size[0] != block_size[1]:
+            raise ValueError(f"Unsupported ASTC block size for {target_texture_format}")
+        block = int(block_size[0])
+        required = ((width + block - 1) // block) * ((height + block - 1) // block) * 16
+        if len(data) != width * height * 4:
+            raise ValueError(
+                f"Invalid RGBA texture buffer: expected {width * height * 4} bytes, got {len(data)}"
+            )
+        source = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+        output = (ctypes.c_uint8 * required)()
+        status = encode(source, width, height, block, effort, output, required)
+        if status != 0:
+            raise RuntimeError(f"ASTC {block}x{block} encoder failed with status {status}")
+        return bytes(output)
+
+    # UnityPy's image_to_texture2d resolves this module-level function when
+    # Texture2D.set_image() is called with an ASTC target format.
+    texture_converter.compress_astc = compress_astc
+
+def run_conversion(input_path: str, shader_path: str, output_path: str, display_name: str, texture_quality: str = "balanced") -> str:
     logs, capture = [], io.StringIO()
     output_dir = output_zip = None
     try:
@@ -105,6 +160,10 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
                 if decoder is texture_converter.astc:
                     texture_converter.CONV_TABLE[texture_format] = (decode_astc, arguments)
             _diagnostic(parent, "iOS ASTC decoder installed")
+            if texture_quality not in {"high", "balanced", "small"}:
+                raise ValueError(f"Unknown texture quality: {texture_quality}")
+            _install_ios_astc_encoder(texture_converter, texture_quality)
+            _diagnostic(parent, f"iOS ASTC encoder installed; quality={texture_quality}")
 
             class _SpaceSavingJobs(list):
                 def __init__(self, owner):
@@ -144,7 +203,7 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
 
             _diagnostic(parent, "creating converter")
             converter = _SpaceSavingConverter(Path(input_path), Path(shader_path), parent,
-                ConvertOptions(create_zip=True, full_validation=False, strict_matching=True, preserve_shadows=True),
+                ConvertOptions(create_zip=True, full_validation=False, strict_matching=True, preserve_shadows=True, texture_quality=texture_quality),
                 logger=logs.append,
                 progress=lambda value, message: logs.append(f"[{value:.0f}%] {message}"))
             _diagnostic(parent, "starting converter.convert()")
