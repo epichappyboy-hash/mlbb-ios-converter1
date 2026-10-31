@@ -1,0 +1,54 @@
+name: Build Isha Native Texture Picker
+on:
+  push:
+    branches: [isha-native-picker]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  build-picker:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build iOS ARM64 picker framework
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          mkdir -p build/TextureQualityPicker.framework
+          xcrun --sdk iphoneos clang \
+            -isysroot "$SDK" \
+            -arch arm64 \
+            -miphoneos-version-min=15.0 \
+            -fobjc-arc -fblocks -fmodules \
+            -O2 -fvisibility=hidden \
+            -dynamiclib Source/TextureQualityPicker.m \
+            -framework Foundation -framework UIKit \
+            -install_name '@rpath/TextureQualityPicker.framework/TextureQualityPicker' \
+            -o build/TextureQualityPicker.framework/TextureQualityPicker
+          cat > build/TextureQualityPicker.framework/Info.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleExecutable</key><string>TextureQualityPicker</string>
+            <key>CFBundleIdentifier</key><string>com.isha.converter.ios.TextureQualityPicker</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleName</key><string>TextureQualityPicker</string>
+            <key>CFBundlePackageType</key><string>FMWK</string>
+            <key>CFBundleShortVersionString</key><string>1.0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>MinimumOSVersion</key><string>15.0</string>
+            <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
+          </dict></plist>
+          PLIST
+          file build/TextureQualityPicker.framework/TextureQualityPicker
+          xcrun --sdk iphoneos nm -gU build/TextureQualityPicker.framework/TextureQualityPicker | grep 'isha_show_texture_quality_picker'
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent TextureQualityPicker.framework ../TextureQualityPicker.framework.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Isha_TextureQualityPicker_iOS_ARM64
+          path: TextureQualityPicker.framework.zip
+          if-no-files-found: error
