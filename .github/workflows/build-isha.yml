@@ -262,7 +262,7 @@ jobs:
           # accepted RGBA32 only or RGBA32 plus pre-existing ASTC.
           validation_pattern = re.compile(
               r'(?ms)^(?P<i>[ \t]*)elif obj\.type\.name == "Texture2D":\n'
-              r".*?(?=^(?P=i)percent = 76)"
+              r".*?(?=^[ \t]*percent = 76)"
           )
           validation = validation_pattern.search(source)
           if not validation:
@@ -270,7 +270,7 @@ jobs:
           i = validation.group("i")
           replacement = "\n".join([
               i + 'elif obj.type.name == "Texture2D":',
-              i + '    if re.search(r"(?:^|[_\\-])(?:red|blue)?tower(?:[_\\-]|$)", source.name.lower()) or "tower_fight" in source.name.lower() or "hometower" in source.name.lower():',
+              i + '    if re.search(r"(?:^|[-_])(?:red|blue)?tower(?:[-_]|$)", source.name.lower()) or "tower_fight" in source.name.lower() or "hometower" in source.name.lower():',
               i + "        continue",
               i + "    texture = obj.read()",
               i + "    expected_texture_format = {",
@@ -280,12 +280,12 @@ jobs:
               i + "    }[self.options.texture_quality]",
               i + "    if int(texture.m_TextureFormat) != int(expected_texture_format):",
               i + '        raise ConversionError(f"Texture is not in selected ASTC format ({self.options.texture_quality}): {texture.m_Name}")',
-              i + "    stream = getattr(texture, \\"m_StreamData\\", None)",
+              i + '    stream = getattr(texture, "m_StreamData", None)',
               i + "    if stream and stream.path:",
               i + '        raise ConversionError(f"Texture stream remains: {texture.m_Name}")',
               i + "    if self.options.full_validation:",
               i + "        image = texture.image",
-              i + "        if image.mode != \\"RGBA\\" or image.size != (",
+              i + '        if image.mode != "RGBA" or image.size != (',
               i + "            texture.m_Width,",
               i + "            texture.m_Height,",
               i + "        ):",
