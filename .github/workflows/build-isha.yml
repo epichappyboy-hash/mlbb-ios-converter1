@@ -1,7 +1,7 @@
 name: Build Isha Converter iOS ASTC Update
 on:
   push:
-    branches: [isha-astc-update]
+    branches: [isha-astc-update, fix/high-astc-no-rgba32]
   workflow_dispatch:
 jobs:
   build:
