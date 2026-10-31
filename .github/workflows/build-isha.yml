@@ -105,7 +105,7 @@ jobs:
           info["CFBundleExecutable"] = "IshaConverteriOS"
           info["CFBundlePackageType"] = "APPL"
           info["CFBundleShortVersionString"] = "1.4"
-          info["CFBundleVersion"] = "79"
+          info["CFBundleVersion"] = "80"
           info["MinimumOSVersion"] = "15.0"
           info["CFBundleIconName"] = "AppIcon"
 
@@ -197,151 +197,10 @@ jobs:
           PY
           xcodegen generate
 
-      - name: Match Windows ASTC RGB 4x4 output exactly
+      - name: Apply Windows-compatible Unity conversion pipeline
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import ast
-          import re
-
-          converter = Path("app/mlbb_ios_converter.py")
-          source = converter.read_text()
-
-          # Match Windows --packer original: preserve source UnityFS compression.
-          old_packer = '        return root.save(packer="lz4"), True'
-          new_packer = '        return root.save(packer="original"), True'
-          if source.count(old_packer) != 1:
-              raise SystemExit("Could not find forced LZ4 bundle-save call")
-          source = source.replace(old_packer, new_packer, 1)
-
-          # High is the default for clean installs and direct converter calls.
-          quality_line = '    texture_quality: str = "balanced"\n'
-          high_line = '    texture_quality: str = "high"\n'
-          if quality_line in source:
-              source = source.replace(quality_line, high_line, 1)
-          elif high_line not in source:
-              options_line = "    preserve_shadows: bool = True\n"
-              if source.count(options_line) != 1:
-                  raise SystemExit("Could not find ConvertOptions fields")
-              source = source.replace(options_line, options_line + high_line, 1)
-
-          # Convert Texture2D assets even in tower bundles. Keep the tower
-          # animation/effect objects untouched; only remove the Texture2D skip.
-          tower_texture_skip = re.compile(
-              r"(?m)^(?P<i>[ \t]*)# Tower textures are left untouched so UnityPy does not rewrite\n"
-              r"(?P=i)# the tower bundle's animation/effect resource graph\.\n"
-              r"(?P=i)if preserve_tower_animation_data:\n"
-              r"(?P=i)    continue\n"
-          )
-          source, tower_convert_skip_count = tower_texture_skip.subn("", source, count=1)
-          if tower_convert_skip_count != 1:
-              raise SystemExit("Could not safely remove the tower Texture2D conversion skip")
-
-          # Keep the real Texture2D decode -> set_image -> ASTC encode path and
-          # change only the target format.
-          target_pattern = re.compile(
-              r"(?m)^(?P<indent>[ \t]*)target_format=TextureFormat\.RGBA32,$"
-          )
-          def target_replacement(match):
-              indent = match.group("indent")
-              return (
-                  indent + "target_format={\n"
-                  + indent + '    "high": TextureFormat.ASTC_RGB_4x4,\n'
-                  + indent + '    "balanced": TextureFormat.ASTC_RGBA_6x6,\n'
-                  + indent + '    "small": TextureFormat.ASTC_RGBA_8x8,\n'
-                  + indent + "}[self.options.texture_quality],"
-              )
-          source, target_count = target_pattern.subn(target_replacement, source, count=1)
-          if target_count != 1:
-              raise SystemExit(
-                  f"Expected exactly one RGBA32 encoder target in Texture2D.set_image; got {target_count}"
-              )
-
-          # Strict validation must include tower textures too.
-          validation_tower_skip = re.compile(
-              r'(?m)^(?P<i>[ \t]*)if re\.search\(r".*source\.name\.lower\(\).*:\n'
-              r"(?P=i)    continue\n"
-          )
-          source, validation_skip_count = validation_tower_skip.subn("", source, count=1)
-          if validation_skip_count != 1:
-              raise SystemExit("Could not remove the tower Texture2D validation bypass")
-
-          # Strict output validation lives in _validate_all, not _convert_bundle.
-          old_validation = "\n".join([
-              "                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):",
-              '                        raise ConversionError(f"Texture is not RGBA32: {texture.m_Name}")',
-          ])
-          new_validation = "\n".join([
-              "                    expected_texture_format = {",
-              '                        "high": TextureFormat.ASTC_RGB_4x4,',
-              '                        "balanced": TextureFormat.ASTC_RGBA_6x6,',
-              '                        "small": TextureFormat.ASTC_RGBA_8x8,',
-              "                    }[self.options.texture_quality]",
-              "                    if int(texture.m_TextureFormat) != int(expected_texture_format):",
-              '                        raise ConversionError(f"Texture is not in selected ASTC format ({self.options.texture_quality}): {texture.m_Name}")',
-          ])
-          if old_validation in source:
-              source = source.replace(old_validation, new_validation, 1)
-          elif new_validation not in source:
-              raise SystemExit("Could not locate the _validate_all ASTC output validator")
-
-          # Verify the conversion/save pipeline and tower-only object preservation.
-          convert_start = source.index("    def _convert_bundle(self, source: Path, target: Path):")
-          validate_start = source.index("    def _validate_all(self):", convert_start)
-          write_report_start = source.index("    def _write_report(", validate_start)
-          convert_section = source[convert_start:validate_start]
-          validate_section = source[validate_start:write_report_start]
-
-          required_conversion = [
-              "texture.set_image(",
-              "obj.save_typetree(texture)",
-              "save_unity_environment(env, source)",
-              "target.write_bytes(output_bytes)",
-              "os.replace(temp_target, target)",
-          ]
-          missing = [item for item in required_conversion if item not in convert_section]
-          if missing:
-              raise SystemExit("Texture conversion/save pipeline is incomplete: " + ", ".join(missing))
-          texture_block = re.search(
-              r'(?ms)^[ \t]*elif obj\.type\.name == "Texture2D":\n(?P<body>.*?)(?=^[ \t]*else:\n)',
-              convert_section,
-          )
-          if not texture_block or "preserve_tower_animation_data" in texture_block.group("body"):
-              raise SystemExit("Some tower Texture2D assets can still bypass conversion")
-          validation_block = re.search(
-              r'(?ms)^[ \t]*elif obj\.type\.name == "Texture2D":\n(?P<body>.*?)(?=^[ \t]*percent = 76)',
-              validate_section,
-          )
-          if not validation_block or "source.name.lower()" in validation_block.group("body"):
-              raise SystemExit("Some tower Texture2D assets can still bypass validation")
-          if "for number, (source, target) in enumerate(self.jobs, 1):" not in validate_section:
-              raise SystemExit("Bundle validation loop is missing its enumerate counter")
-          if "ASTC_RGB_4x4" not in validate_section or "Texture is not in selected ASTC format" not in validate_section:
-              raise SystemExit("Strict ASTC output validation is missing")
-          if "target_format=TextureFormat.RGBA32" in source:
-              raise SystemExit("RGBA32 remains as a Texture2D encoder target")
-          if 'texture_quality: str = "high"' not in source:
-              raise SystemExit("High ASTC quality is not the converter default")
-
-          bridge = Path("../../patches/converter_bridge.py").read_text()
-          native = Path("../../patches/astc_encoder_ffi.cpp").read_text()
-          if "effort = 100.0" not in bridge:
-              raise SystemExit("iOS ASTC encoder does not match Windows quality=100")
-          if "ASTCENC_PRF_LDR," not in native or "ASTCENC_PRF_LDR_SRGB" in native:
-              raise SystemExit("iOS ASTC profile does not match Windows ASTCProfile.LDR")
-          if "ASTCENC_FLG_USE_DECODE_UNORM8" not in native:
-              raise SystemExit("iOS ASTC UNORM8 decode flag is missing")
-
-          if 'return root.save(packer="original"), True' not in source:
-              raise SystemExit("Windows original bundle packer was not applied")
-          if 'return root.save(packer="lz4"), True' in source:
-              raise SystemExit("Forced regular LZ4 packing remains")
-
-          ast.parse(source)
-          converter.write_text(source)
-          print("Verified: ASTC_RGB_4x4 High, Windows LDR quality 100, original UnityFS packer retained, all Texture2D assets validated.")
-          PY
+          python3 ../../patches/apply_windows_compat.py app/mlbb_ios_converter.py
           cp ../../patches/converter_bridge.py app/converter_bridge.py
           python3 -m py_compile app/converter_bridge.py app/mlbb_ios_converter.py
       - name: Restore Build 68 optional FMOD import behavior
