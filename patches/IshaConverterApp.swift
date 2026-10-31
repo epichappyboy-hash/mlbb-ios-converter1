@@ -19,7 +19,7 @@ struct IshaConverterView: View {
     @State private var createZIP = true
     @State private var fullValidation = false
     @State private var preserveShadows = true
-    @State private var textureQuality = "balanced"
+    @State private var textureQuality = "high"
     @State private var status = "Pumili ng Android Unity bundle para magsimula."
     @State private var errorMessage: String?
     @State private var conversionLog = "Ready. Built-in ShaderVariants are included."
