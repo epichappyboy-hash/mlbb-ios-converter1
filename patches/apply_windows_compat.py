@@ -125,7 +125,7 @@ if validate_section.count(load) != 1:
 validate_section = validate_section.replace(
     load,
     load + '''            source_textures = {
-                obj.path_id: obj.read()
+                obj.path_id: obj
                 for obj in source_env.objects
                 if obj.type.name == "Texture2D"
             }
@@ -138,11 +138,12 @@ validator_re = re.compile(
 )
 new_validator = '''                elif obj.type.name == "Texture2D":
                     texture = obj.read()
-                    source_texture = source_textures.get(obj.path_id)
-                    if source_texture is None:
+                    source_texture_obj = source_textures.get(obj.path_id)
+                    if source_texture_obj is None:
                         raise ConversionError(
                             f"Source Texture2D missing for {texture.m_Name} in {target.name}"
                         )
+                    source_texture = source_texture_obj.read()
                     source_format = TextureFormat(int(source_texture.m_TextureFormat))
                     if windows_should_reencode_texture(source_texture):
                         source_image = source_texture.image.convert("RGBA")
