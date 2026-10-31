@@ -51,7 +51,7 @@ jobs:
           done
           xcrun --sdk iphoneos clang++ -std=c++14 -O3 -fPIC -fvisibility=hidden -fno-fast-math -ffp-contract=off -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -I "$source_dir" -c patches/astc_encoder_ffi.cpp -o "$objects/astc_encoder_ffi.o"
           xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -Wl,-install_name,@rpath/AstcEncoder.framework/AstcEncoder -Wl,-dead_strip "$objects"/*.o -o "$framework/AstcEncoder"
-          cp /tmp/astc-encoder/LICENSE "$framework/LICENSE-ASTC.txt"
+          cp /tmp/astc-encoder/LICENSE.txt "$framework/LICENSE-ASTC.txt"
           cat > "$framework/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
