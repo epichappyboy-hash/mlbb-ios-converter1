@@ -222,7 +222,7 @@ jobs:
           # Keep the real Texture2D image decode -> set_image -> ASTC encode
           # path intact and change only its target format.
           target_pattern = re.compile(
-              r"(?m)^(?P<indent>[ \t]*)target_format=TextureFormat\\.RGBA32,$"
+              r"(?m)^(?P<indent>[ \t]*)target_format=TextureFormat\.RGBA32,$"
           )
           def target_replacement(match):
               indent = match.group("indent")
