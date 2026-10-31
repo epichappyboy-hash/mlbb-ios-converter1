@@ -104,15 +104,28 @@ jobs:
           info["CFBundleName"] = "Isha Converter iOS"
           info["CFBundleExecutable"] = "IshaConverteriOS"
           info["CFBundlePackageType"] = "APPL"
-          info["CFBundleShortVersionString"] = "1.1"
-          info["CFBundleVersion"] = "69"
+          info["CFBundleShortVersionString"] = "1.2"
+          info["CFBundleVersion"] = "70"
           info["MinimumOSVersion"] = "15.0"
           info["CFBundleIconName"] = "AppIcon"
+
+          # Register the app as a document handler so Files can offer "Open in Isha".
+          info["LSSupportsOpeningDocumentsInPlace"] = True
+          info["UIFileSharingEnabled"] = True
           info["CFBundleDocumentTypes"] = [{
-              "CFBundleTypeName": "Unity asset bundle",
+              "CFBundleTypeName": "ZIP archive or Unity asset bundle",
               "CFBundleTypeRole": "Editor",
               "LSHandlerRank": "Alternate",
               "LSItemContentTypes": ["public.zip-archive", "com.codex.unity3d"],
+          }]
+          info["UTImportedTypeDeclarations"] = [{
+              "UTTypeIdentifier": "com.codex.unity3d",
+              "UTTypeDescription": "Unity Asset Bundle",
+              "UTTypeConformsTo": ["public.data", "public.item"],
+              "UTTypeTagSpecification": {
+                  "public.filename-extension": ["unity3d"],
+                  "public.mime-type": ["application/octet-stream"],
+              },
           }]
           plist_path.write_bytes(plistlib.dumps(info))
           if "com.isha.converter.ios" not in project.read_text():
