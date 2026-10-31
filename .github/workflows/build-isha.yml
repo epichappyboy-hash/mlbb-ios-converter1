@@ -105,7 +105,7 @@ jobs:
           info["CFBundleExecutable"] = "IshaConverteriOS"
           info["CFBundlePackageType"] = "APPL"
           info["CFBundleShortVersionString"] = "1.4"
-          info["CFBundleVersion"] = "82"
+          info["CFBundleVersion"] = "83"
           info["MinimumOSVersion"] = "15.0"
           info["CFBundleIconName"] = "AppIcon"
 
@@ -200,7 +200,7 @@ jobs:
       - name: Apply Windows-compatible Unity conversion pipeline
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
-          python3 ../../patches/apply_windows_compat.py app/mlbb_ios_converter.py
+          python3 ../../patches/apply_windows_compat.py app/mlbb_ios_converter.py app_packages/UnityPy
           cp ../../patches/converter_bridge.py app/converter_bridge.py
           python3 -m py_compile app/converter_bridge.py app/mlbb_ios_converter.py
           python3 - <<'PY'
@@ -210,6 +210,14 @@ jobs:
           options = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ConvertOptions")
           assert any(isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == "texture_quality" for n in options.body), "ConvertOptions.texture_quality missing"
           print("Verified: ConvertOptions accepts texture_quality.")
+          python3 -m compileall -q app_packages/UnityPy
+          unitypy = Path("app_packages/UnityPy")
+          assert '__version__ = "1.25.4"' in (unitypy / "__init__.py").read_text()
+          assert "hdr: bool = False" in (unitypy / "export/Texture2DConverter.py").read_text()
+          assert "version >= 23" in (unitypy / "files/SerializedFile.py").read_text()
+          assert "lz4hc" in (unitypy / "files/BundleFile.py").read_text()
+          assert "read_byte_array()" in (unitypy / "helpers/TypeTreeHelper.py").read_text()
+          print("Verified: UnityPy 1.25.4 source compatibility updates.")
           PY
       - name: Restore Build 68 optional FMOD import behavior
         working-directory: reconstructed/MLBB_iOS_Converter
