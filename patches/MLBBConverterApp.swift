@@ -12,6 +12,7 @@ struct MLBBConverterApp: App {
 struct ConverterView: View {
     @State private var inputURL: URL?
     @State private var outputURL: URL?
+    @State private var selectedTextureQuality = "balanced"
     @State private var showImporter = false
     @State private var showShareSheet = false
     @State private var isConverting = false
@@ -34,6 +35,17 @@ struct ConverterView: View {
                     .font(.title2.bold())
                 Text("Android Unity assets → iOS")
                     .foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("TEXTURE QUALITY")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    HStack(spacing: 8) {
+                        qualityOption("High", "ASTC 4×4", value: "high")
+                        qualityOption("Balanced", "ASTC 6×6", value: "balanced")
+                        qualityOption("Small", "ASTC 8×8", value: "small")
+                    }
+                }
 
                 Button {
                     showImporter = true
@@ -173,6 +185,25 @@ struct ConverterView: View {
         }
     }
 
+    private func qualityOption(_ title: String, _ detail: String, value: String) -> some View {
+        let selected = selectedTextureQuality == value
+        return Button {
+            selectedTextureQuality = value
+        } label: {
+            VStack(spacing: 4) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(detail).font(.system(size: 11)).foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .padding(.vertical, 6)
+            .background(selected ? Color.blue.opacity(0.16) : Color(.secondarySystemBackground))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(selected ? Color.blue : Color.secondary.opacity(0.2), lineWidth: selected ? 1.5 : 1))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .disabled(isConverting)
+    }
+
     private func convert() {
         guard let inputURL else { return }
         isConverting = true
@@ -182,7 +213,7 @@ struct ConverterView: View {
         try? FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         let started = "=== CONVERSION STARTED ===\n\(Date().formatted())\nInput: \(inputURL.lastPathComponent)\n"
         try? started.write(to: diagnosticsFile, atomically: true, encoding: .utf8)
-        PythonConverter.shared.convert(input: inputURL, outputDirectory: outputDirectory) { result in
+        PythonConverter.shared.convert(input: inputURL, outputDirectory: outputDirectory, textureQuality: selectedTextureQuality) { result in
             DispatchQueue.main.async {
                 isConverting = false
                 diagnosticsAvailable = FileManager.default.fileExists(atPath: diagnosticsFile.path)
