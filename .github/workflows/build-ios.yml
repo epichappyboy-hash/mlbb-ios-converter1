@@ -313,11 +313,11 @@ jobs:
           if target_count != 1 and "TextureFormat.ASTC_RGBA_6x6" not in source:
               raise SystemExit("Could not connect ASTC target formats to Texture2D conversion")
 
-          old_validation = "\\n".join([
+          old_validation = "\n".join([
               "                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):",
-              "                        raise ConversionError(f\\\"Texture is not RGBA32: {texture.m_Name}\\\")",
+              '                        raise ConversionError(f"Texture is not RGBA32: {texture.m_Name}")',
           ])
-          new_validation = "\\n".join([
+          new_validation = "\n".join([
               "                    expected_texture_format = {",
               '                        "high": TextureFormat.ASTC_RGBA_4x4,',
               '                        "balanced": TextureFormat.ASTC_RGBA_6x6,',
