@@ -34,7 +34,7 @@ if not quality_field:
     else:
         insert_line = first_method.lineno - 1
     lines = source.splitlines(keepends=True)
-    lines.insert(insert_line, '    texture_quality: str = "high"\\n')
+    lines.insert(insert_line, '    texture_quality: str = "high"\n')
     source = "".join(lines)
 module = ast.parse(source)
 options_class = next(
