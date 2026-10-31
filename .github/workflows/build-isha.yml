@@ -104,8 +104,8 @@ jobs:
           info["CFBundleName"] = "Isha Converter iOS"
           info["CFBundleExecutable"] = "IshaConverteriOS"
           info["CFBundlePackageType"] = "APPL"
-          info["CFBundleShortVersionString"] = "1.3"
-          info["CFBundleVersion"] = "71"
+          info["CFBundleShortVersionString"] = "1.4"
+          info["CFBundleVersion"] = "72"
           info["MinimumOSVersion"] = "15.0"
           info["CFBundleIconName"] = "AppIcon"
 
@@ -259,6 +259,52 @@ jobs:
           PY
           cp ../../patches/converter_bridge.py app/converter_bridge.py
           python3 -m py_compile app/converter_bridge.py app/mlbb_ios_converter.py
+
+      - name: Restore Build 68 optional FMOD import behavior
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          audio = Path("app_packages/UnityPy/export/AudioClipConverter.py")
+          source = audio.read_text()
+
+          old_import = "import fmod_toolkit"
+          new_import = "try:\n    import fmod_toolkit\nexcept ImportError:\n    fmod_toolkit = None"
+          if new_import not in source:
+              if source.count(old_import) != 1:
+                  raise SystemExit("Unexpected UnityPy AudioClipConverter FMOD import")
+              source = source.replace(old_import, new_import, 1)
+
+          old_call = "    return fmod_toolkit.raw_to_wav("
+          new_call = (
+              '    if fmod_toolkit is None:\n'
+              '        raise RuntimeError("FMOD audio decoding is unavailable in this iOS build.")\n'
+              '    return fmod_toolkit.raw_to_wav('
+          )
+          if new_call not in source:
+              if source.count(old_call) != 1:
+                  raise SystemExit("Unexpected UnityPy FMOD decoder call")
+              source = source.replace(old_call, new_call, 1)
+
+          if "except ImportError:" not in source or "fmod_toolkit = None" not in source:
+              raise SystemExit("Build 68 optional FMOD import fallback was not restored")
+          if "FMOD audio decoding is unavailable in this iOS build." not in source:
+              raise SystemExit("Build 68 FMOD fallback guard was not restored")
+
+          audio.write_text(source)
+          print("Restored the exact Build 68 optional-FMOD behavior.")
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          import ast
+          path = Path("app_packages/UnityPy/export/AudioClipConverter.py")
+          ast.parse(path.read_text())
+          text = path.read_text()
+          assert "try:\n    import fmod_toolkit\nexcept ImportError:\n    fmod_toolkit = None" in text
+          assert "FMOD audio decoding is unavailable in this iOS build." in text
+          print("AudioClipConverter fallback syntax and markers verified.")
+          PY
 
       - name: Build unsigned Isha iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
