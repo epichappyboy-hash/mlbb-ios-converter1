@@ -1,4 +1,4 @@
-name: Build standalone MLBB iOS Converter
+name: Build MLBB Converter ASTC Update
 on:
   push:
     branches: [main, feature/astc-texture-quality]
@@ -213,6 +213,10 @@ jobs:
           from pathlib import Path
           path = Path("Sources/Info.plist")
           data = plistlib.loads(path.read_bytes())
+          if data.get("CFBundleIdentifier") != "com.codex.mlbbconverter":
+              raise SystemExit("Refusing to change the existing MLBB Converter bundle identifier")
+          data["CFBundleShortVersionString"] = "1.1"
+          data["CFBundleVersion"] = "2"
           for document_type in data.get("CFBundleDocumentTypes", []):
               document_type["CFBundleTypeRole"] = "Editor"
               document_type["LSHandlerRank"] = "Alternate"
@@ -267,18 +271,8 @@ jobs:
                   "                    self.log(f\"Starting bundle {number}/{len(sources)}: {source.name}\")\n                    self._convert_bundle(source, target)\n                    gc.collect()\n                    self.log(f\"Finished bundle {number}/{len(sources)}: {source.name}\")\n                    self.jobs.append((source, target))",
                   1,
               )
-          texture_line = "                    texture = obj.read()\n                    image = texture.image.convert(\"RGBA\")"
-          astc_branch = "                    texture = obj.read()\n                    source_format = int(texture.m_TextureFormat)\n                    # ASTC is a cross-platform GPU format supported by modern iPhones.\n                    # Preserve its compressed bytes instead of decoding a large image on-device.\n                    if 48 <= source_format <= 59:\n                        self.stats.textures += 1\n                        continue\n                    image = texture.image.convert(\"RGBA\")"
-          if texture_line in module:
-              module = module.replace(texture_line, astc_branch, 1)
-          elif astc_branch not in module:
-              raise SystemExit("Could not add the low-memory ASTC texture path")
-          old_validation = "                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):\n                        raise ConversionError(f\"Texture is not RGBA32: {texture.m_Name}\")"
-          new_validation = "                    texture_format = int(texture.m_TextureFormat)\n                    if texture_format != int(TextureFormat.RGBA32) and not (48 <= texture_format <= 59):\n                        raise ConversionError(f\"Texture format is not iOS-ready: {texture.m_Name}\")\n                    if 48 <= texture_format <= 59:\n                        continue"
-          if old_validation in module:
-              module = module.replace(old_validation, new_validation, 1)
-          elif new_validation not in module:
-              raise SystemExit("Could not update texture validation for preserved ASTC")
+          # Do not skip existing ASTC textures. The converter must decode every eligible
+          # source texture and re-encode it using the selected ASTC block size.
           converter.write_text(module)
 
           # Install the lazy-import bridge last so earlier compatibility patches
@@ -319,29 +313,18 @@ jobs:
           if target_count != 1 and "TextureFormat.ASTC_RGBA_6x6" not in source:
               raise SystemExit("Could not connect ASTC target formats to Texture2D conversion")
 
-          validation_pattern = re.compile(
-              r'(?m)^(?P<indent>[ \t]*)texture_format = int\(texture\.m_TextureFormat\)\n'
-              r'(?P=indent)if texture_format != int\(TextureFormat\.RGBA32\) and not \(48 <= texture_format <= 59\):\n'
-              r'(?P=indent)    raise ConversionError\(f"Texture format is not iOS-ready: \{texture\.m_Name\}"\)\n'
-              r'(?P=indent)if 48 <= texture_format <= 59:\n'
-              r'(?P=indent)    continue'
-          )
-          def validation_replacement(match):
-              indent = match.group("indent")
-              return (
-                  indent + "texture_format = int(texture.m_TextureFormat)\n"
-                  + indent + "if 48 <= texture_format <= 59:\n"
-                  + indent + "    continue\n"
-                  + indent + "expected_texture_format = {\n"
-                  + indent + '    "high": TextureFormat.ASTC_RGBA_4x4,\n'
-                  + indent + '    "balanced": TextureFormat.ASTC_RGBA_6x6,\n'
-                  + indent + '    "small": TextureFormat.ASTC_RGBA_8x8,\n'
-                  + indent + "}[self.options.texture_quality]\n"
-                  + indent + "if texture_format != int(expected_texture_format):\n"
-                  + indent + '    raise ConversionError(f"Texture is not in the selected ASTC format: {texture.m_Name}")'
-              )
-          source, validation_count = validation_pattern.subn(validation_replacement, source, count=1)
-          if validation_count != 1 and "Texture is not in the selected ASTC format" not in source:
+          old_validation = """                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):
+                        raise ConversionError(f"Texture is not RGBA32: {texture.m_Name}")"""
+          new_validation = """                    expected_texture_format = {
+                        "high": TextureFormat.ASTC_RGBA_4x4,
+                        "balanced": TextureFormat.ASTC_RGBA_6x6,
+                        "small": TextureFormat.ASTC_RGBA_8x8,
+                    }[self.options.texture_quality]
+                    if int(texture.m_TextureFormat) != int(expected_texture_format):
+                        raise ConversionError(f"Texture is not in selected ASTC format ({self.options.texture_quality}): {texture.m_Name}")"""
+          if old_validation in source:
+              source = source.replace(old_validation, new_validation, 1)
+          elif new_validation not in source:
               raise SystemExit("Could not update texture validation for selected ASTC format")
 
           if quality_line.rstrip("\n") not in source or "ASTC_RGBA_6x6" not in source:
@@ -365,9 +348,9 @@ jobs:
         run: |
           mkdir -p package/Payload
           cp -R build/Build/Products/Release-iphoneos/MLBBConverter.app package/Payload/
-          ditto -c -k --sequesterRsrc --keepParent package/Payload MLBB_iOS_Converter.ipa
+          ditto -c -k --sequesterRsrc --keepParent package/Payload MLBB_Converter_ASTC_Update.ipa
       - uses: actions/upload-artifact@v4
         with:
-          name: MLBB_iOS_Converter_unsigned
-          path: reconstructed/MLBB_iOS_Converter/MLBB_iOS_Converter.ipa
+          name: MLBB_Converter_ASTC_Update_unsigned
+          path: reconstructed/MLBB_iOS_Converter/MLBB_Converter_ASTC_Update.ipa
           if-no-files-found: error
