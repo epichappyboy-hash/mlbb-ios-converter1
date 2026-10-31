@@ -294,7 +294,18 @@ def run_conversion(
             _diagnostic(parent, "Unity bundle conversion returned")
 
         if output_zip is None or not output_zip.is_file():
-            raise RuntimeError("The converter did not create an output ZIP.")
+            if create_zip:
+                raise RuntimeError("The converter did not create an output ZIP.")
+            if output_dir is None or not Path(output_dir).is_dir():
+                raise RuntimeError("The converter did not create an output folder.")
+            _diagnostic(parent, f"conversion succeeded: output folder {Path(output_dir).name}")
+            return json.dumps({
+                "ok": True,
+                "output": str(output_dir),
+                "isDirectory": True,
+                "convertedBundles": converter.stats.bundles,
+                "logs": logs[-120:],
+            })
         _diagnostic(parent, "checking output ZIP CRC")
         with zipfile.ZipFile(output_zip) as archive:
             bad = archive.testzip()
@@ -307,6 +318,7 @@ def run_conversion(
         return json.dumps({
             "ok": True,
             "output": str(final_zip),
+            "isDirectory": False,
             "convertedBundles": converter.stats.bundles,
             "logs": logs[-120:],
         })
