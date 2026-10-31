@@ -139,9 +139,29 @@ jobs:
           image.lockFocus()
           NSColor(calibratedRed: 0.055, green: 0.063, blue: 0.082, alpha: 1).setFill()
           NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: size, height: size), xRadius: 225, yRadius: 225).fill()
-          if let symbol = NSImage(systemSymbolName: "arrow.left.arrow.right.square", accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 570, weight: .semibold))?.withTintColor(NSColor(calibratedRed: 0.24, green: 0.57, blue: 1.0, alpha: 1)) {
-              symbol.draw(in: NSRect(x: 150, y: 150, width: 724, height: 724))
-          }
+          let blue = NSColor(calibratedRed: 0.24, green: 0.57, blue: 1.0, alpha: 1)
+          blue.setStroke()
+          let frame = NSBezierPath(roundedRect: NSRect(x: 180, y: 180, width: 664, height: 664), xRadius: 90, yRadius: 90)
+          frame.lineWidth = 34
+          frame.stroke()
+          let topArrow = NSBezierPath()
+          topArrow.lineWidth = 38
+          topArrow.lineCapStyle = .round
+          topArrow.move(to: NSPoint(x: 340, y: 625))
+          topArrow.line(to: NSPoint(x: 695, y: 625))
+          topArrow.move(to: NSPoint(x: 625, y: 695))
+          topArrow.line(to: NSPoint(x: 695, y: 625))
+          topArrow.line(to: NSPoint(x: 625, y: 555))
+          topArrow.stroke()
+          let bottomArrow = NSBezierPath()
+          bottomArrow.lineWidth = 38
+          bottomArrow.lineCapStyle = .round
+          bottomArrow.move(to: NSPoint(x: 684, y: 395))
+          bottomArrow.line(to: NSPoint(x: 329, y: 395))
+          bottomArrow.move(to: NSPoint(x: 399, y: 465))
+          bottomArrow.line(to: NSPoint(x: 329, y: 395))
+          bottomArrow.line(to: NSPoint(x: 399, y: 325))
+          bottomArrow.stroke()
           image.unlockFocus()
           let rep = NSBitmapImageRep(data: image.tiffRepresentation!)!
           let png = rep.representation(using: .png, properties: [:])!
