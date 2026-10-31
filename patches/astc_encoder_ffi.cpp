@@ -34,7 +34,7 @@ int mlbb_astc_encode_rgba(
 
     astcenc_config config{};
     astcenc_error status = astcenc_config_init(
-        ASTCENC_PRF_LDR_SRGB,
+        ASTCENC_PRF_LDR,
         block_size,
         block_size,
         1,
