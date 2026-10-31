@@ -105,7 +105,7 @@ jobs:
           info["CFBundleExecutable"] = "IshaConverteriOS"
           info["CFBundlePackageType"] = "APPL"
           info["CFBundleShortVersionString"] = "1.4"
-          info["CFBundleVersion"] = "80"
+          info["CFBundleVersion"] = "81"
           info["MinimumOSVersion"] = "15.0"
           info["CFBundleIconName"] = "AppIcon"
 
