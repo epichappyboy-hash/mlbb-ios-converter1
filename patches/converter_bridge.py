@@ -147,7 +147,9 @@ def _install_ios_astc_encoder(texture_converter, texture_quality: str) -> None:
     _ASTC_LIBRARY = library
 
     # Block dimensions determine visual quality; effort controls encoder search time.
-    effort = {"high": 80.0, "balanced": 60.0, "small": 45.0}[texture_quality]
+    # Match the Windows portable converter: ASTCProfile.LDR, quality=100,
+    # and USE_DECODE_UNORM8 for every selected ASTC block size.
+    effort = 100.0
 
     def compress_astc(data: bytes, width: int, height: int, target_texture_format) -> bytes:
         block_size = texture_converter.TEXTURE_FORMAT_BLOCK_SIZE_TABLE[target_texture_format]
