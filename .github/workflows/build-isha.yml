@@ -105,7 +105,7 @@ jobs:
           info["CFBundleExecutable"] = "IshaConverteriOS"
           info["CFBundlePackageType"] = "APPL"
           info["CFBundleShortVersionString"] = "1.4"
-          info["CFBundleVersion"] = "76"
+          info["CFBundleVersion"] = "77"
           info["MinimumOSVersion"] = "15.0"
           info["CFBundleIconName"] = "AppIcon"
 
@@ -227,17 +227,12 @@ jobs:
 
           # The supplied Windows output was inspected directly: every one of
           # its 27 Texture2D assets uses Unity ASTC_RGB_4x4 (enum 48).
-          source, count = re.subn(
-              r'(?ms)(texture\.set_image\(\s*image,\s*target_format=\{\s*)'
-              r'"high": TextureFormat\.ASTC_RGBA_4x4,'
-              r'(\s*"balanced": TextureFormat\.ASTC_RGBA_6x6,\s*"small": TextureFormat\.ASTC_RGBA_8x8,)',
-              r'\1"high": TextureFormat.ASTC_RGB_4x4,\2',
-              source,
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("Could not switch High output to Windows ASTC_RGB_4x4")
-          
+          old_high = '"high": TextureFormat.ASTC_RGBA_4x4,'
+          new_high = '"high": TextureFormat.ASTC_RGB_4x4,'
+          if source.count(old_high) != 1:
+              raise SystemExit("Expected one High ASTC_RGBA_4x4 target in Texture2D.set_image")
+          source = source.replace(old_high, new_high, 1)
+
           # Strict validation applies to all Texture2D objects, including towers.
           validation_tower_skip = re.compile(
               r'(?m)^(?P<i>[ \t]*)if re\.search\(r".*source\.name\.lower\(\).*:\n'
