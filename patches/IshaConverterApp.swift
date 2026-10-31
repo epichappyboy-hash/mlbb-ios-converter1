@@ -57,6 +57,10 @@ struct IshaConverterView: View {
         documents.appendingPathComponent("Converted", isDirectory: true)
     }
 
+    private var supportedImportTypes: [UTType] {
+        [.zip, UTType(filenameExtension: "unity3d") ?? .data]
+    }
+
     var body: some View {
         ZStack {
             background.ignoresSafeArea()
@@ -76,9 +80,12 @@ struct IshaConverterView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onOpenURL { url in
+            importOpenedURL(url)
+        }
         .fileImporter(
             isPresented: $showImporter,
-            allowedContentTypes: [.item],
+            allowedContentTypes: supportedImportTypes,
             allowsMultipleSelection: false
         ) { result in
             importSelectedFile(result)
@@ -421,23 +428,85 @@ struct IshaConverterView: View {
     private func importSelectedFile(_ result: Result<[URL], Error>) {
         do {
             guard let selected = try result.get().first else { return }
-            let ext = selected.pathExtension.lowercased()
-            guard ext == "unity3d" || ext == "zip" else {
-                throw IshaConverterError.conversionFailed("Pumili ng .unity3d o .zip file.")
+            importFile(from: selected)
+        } catch {
+            errorMessage = "Hindi mabasa ang napiling file: \(error.localizedDescription)"
+        }
+    }
+
+    // Handles ZIP/Unity files sent from the iOS Files app through Open In / Share.
+    private func importOpenedURL(_ url: URL) {
+        guard url.isFileURL else {
+            errorMessage = "Hindi valid na local file URL ang ipinasa ng Files app."
+            return
+        }
+        importFile(from: url)
+    }
+
+    private func importFile(from selected: URL) {
+        let ext = selected.pathExtension.lowercased()
+        guard ext == "unity3d" || ext == "zip" else {
+            errorMessage = "Hindi supported ang file na ito. Pumili ng .unity3d o .zip file."
+            return
+        }
+
+        let hasScopedAccess = selected.startAccessingSecurityScopedResource()
+        defer {
+            if hasScopedAccess {
+                selected.stopAccessingSecurityScopedResource()
             }
-            let scoped = selected.startAccessingSecurityScopedResource()
-            defer { if scoped { selected.stopAccessingSecurityScopedResource() } }
+        }
+
+        do {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: selected.path, isDirectory: &isDirectory),
+                  !isDirectory.boolValue else {
+                throw IshaConverterError.conversionFailed("Hindi makita ang ZIP file o folder ang napili.")
+            }
+
             let imports = documents.appendingPathComponent("Imported", isDirectory: true)
-            try FileManager.default.createDirectory(at: imports, withIntermediateDirectories: true)
-            let destination = imports.appendingPathComponent(UUID().uuidString + "_" + selected.lastPathComponent)
-            try FileManager.default.copyItem(at: selected, to: destination)
+            try FileManager.default.createDirectory(
+                at: imports,
+                withIntermediateDirectories: true
+            )
+            let destination = imports.appendingPathComponent(
+                UUID().uuidString + "_" + selected.lastPathComponent
+            )
+
+            // Coordinate reads from Files/iCloud providers before copying into app storage.
+            let coordinator = NSFileCoordinator(filePresenter: nil)
+            var coordinationError: NSError?
+            var copyError: Error?
+            coordinator.coordinate(
+                readingItemAt: selected,
+                options: .withoutChanges,
+                error: &coordinationError
+            ) { readableURL in
+                do {
+                    try FileManager.default.copyItem(at: readableURL, to: destination)
+                } catch {
+                    copyError = error
+                }
+            }
+
+            if let coordinationError {
+                throw coordinationError
+            }
+            if let copyError {
+                throw copyError
+            }
+            guard FileManager.default.fileExists(atPath: destination.path) else {
+                throw IshaConverterError.conversionFailed("Hindi nakopya ang file mula sa Files app.")
+            }
+
             inputURL = destination
             outputURL = nil
             status = "Handa nang i-convert: \(selected.lastPathComponent)"
-            conversionLog = "Input selected: \(selected.lastPathComponent)\nTexture quality: \(textureQuality.uppercased())"
+            conversionLog = "Input imported: \(selected.lastPathComponent)\nSource: Files / Document Picker\nTexture quality: \(textureQuality.uppercased())"
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            status = "Hindi na-import ang file: \(error.localizedDescription)"
+            errorMessage = "Hindi na-import ang file mula sa Files app. \(error.localizedDescription)"
         }
     }
 
