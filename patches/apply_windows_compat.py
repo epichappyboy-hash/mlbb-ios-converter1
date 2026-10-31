@@ -4,8 +4,8 @@ from __future__ import annotations
 import ast, re, sys
 from pathlib import Path
 
-if len(sys.argv) != 2:
-    raise SystemExit("usage: apply_windows_compat.py PATH_TO_mlbb_ios_converter.py")
+if len(sys.argv) not in (2, 3):
+    raise SystemExit("usage: apply_windows_compat.py PATH_TO_mlbb_ios_converter.py [UNITYPY_PACKAGE_DIR]")
 path = Path(sys.argv[1])
 source = path.read_text(encoding="utf-8")
 
@@ -242,3 +242,156 @@ if "mipmap_count=mipmap_count" not in source:
     raise SystemExit("Source mip count preservation is missing")
 path.write_text(source, encoding="utf-8")
 print("Windows-compatible texture policy, alpha-aware ASTC, mip preservation, original UnityFS packer, and strict passthrough validation applied.")
+
+# Apply behavior-changing UnityPy 1.25.4 source updates from the Windows package.
+# Keep iOS-only native frameworks and the optional FMOD fallback untouched.
+if len(sys.argv) == 3:
+    unitypy = Path(sys.argv[2])
+    if not (unitypy / "__init__.py").is_file():
+        raise SystemExit(f"UnityPy package directory not found: {unitypy}")
+
+    def rep(rel, old, new):
+        target = unitypy / rel
+        value = target.read_text(encoding="utf-8")
+        count = value.count(old)
+        if count == 0 and new in value:
+            return
+        if count != 1:
+            raise SystemExit(f"UnityPy 1.25.4 patch anchor mismatch: {rel}; count={count}")
+        target.write_text(value.replace(old, new, 1), encoding="utf-8")
+
+    rep("__init__.py", '__version__ = "1.25.3"', '__version__ = "1.25.4"')
+    rep("environment.py",
+        '        z = ZipFile(buffer)\n        self.load_assets(z.namelist(), lambda x: z.open(x, "r"))  # type: ignore\n        z.close()\n',
+        '        z = ZipFile(buffer)\n\n'
+        '        def load_internal_file(name: str):\n'
+        '            file_data = z.open(name, "r").read()\n'
+        '            return io.BytesIO(file_data)\n\n'
+        '        self.load_assets(z.namelist(), load_internal_file)\n'
+        '        z.close()\n')
+
+    rep("export/Texture2DConverter.py",
+        'def astc(image_data: bytes, width: int, height: int, block_size: tuple) -> Image.Image:',
+        'def astc(image_data: bytes, width: int, height: int, block_size: tuple, hdr: bool = False) -> Image.Image:')
+    rep("export/Texture2DConverter.py",
+        '    context = get_astc_context(block_size)\n    context.decompress(image_data[:texture_size], image, astc_encoder.ASTCSwizzle.from_str("RGBA"))',
+        '    context = get_astc_context(block_size, hdr)\n    context.decompress(image_data[:texture_size], image, astc_encoder.ASTCSwizzle.from_str("RGBA"))')
+    rep("export/Texture2DConverter.py",
+        'def _get_astc_context(ident: int, block_size: tuple):',
+        'def _get_astc_context(ident: int, block_size: tuple, hdr: bool = False):')
+    rep("export/Texture2DConverter.py",
+        '    config = astc_encoder.ASTCConfig(\n'
+        '        astc_encoder.ASTCProfile.LDR,\n'
+        '        *block_size,\n'
+        '        block_z=1,\n'
+        '        quality=100,\n'
+        '        flags=astc_encoder.ASTCConfigFlags.USE_DECODE_UNORM8,\n'
+        '    )\n',
+        '    if hdr:\n'
+        '        config = astc_encoder.ASTCConfig(astc_encoder.ASTCProfile.HDR, *block_size, block_z=1, quality=100)\n'
+        '    else:\n'
+        '        config = astc_encoder.ASTCConfig(\n'
+        '            astc_encoder.ASTCProfile.LDR,\n'
+        '            *block_size,\n'
+        '            block_z=1,\n'
+        '            quality=100,\n'
+        '            flags=astc_encoder.ASTCConfigFlags.USE_DECODE_UNORM8,\n'
+        '        )\n')
+    rep("export/Texture2DConverter.py",
+        'def get_astc_context(block_size: tuple):',
+        'def get_astc_context(block_size: tuple, hdr: bool = False):')
+    rep("export/Texture2DConverter.py",
+        '    return _get_astc_context(get_ident(), block_size)',
+        '    return _get_astc_context(get_ident(), block_size, hdr)')
+    for block_size in ("4x4", "5x5", "6x6", "8x8", "10x10", "12x12"):
+        x, y = block_size.split("x")
+        rep("export/Texture2DConverter.py",
+            f'TF.ASTC_HDR_{block_size}: (astc, (({x}, {y}),)),',
+            f'TF.ASTC_HDR_{block_size}: (astc, (({x}, {y}), True)),')
+
+    rep("files/BundleFile.py",
+        "or tuple consisting of (block_info_flag, data_flag)",
+        "or tuple consisting of (data_flag, block_info_flag)")
+    rep("files/BundleFile.py",
+        '            elif packer == "lz4":\n                self.save_fs(writer, data_flag=194, block_info_flag=2)\n',
+        '            elif packer == "lz4":\n                self.save_fs(writer, data_flag=194, block_info_flag=2)\n'
+        '            elif packer == "lz4hc":\n                self.save_fs(writer, data_flag=195, block_info_flag=3)\n')
+    rep("helpers/CompressionHelper.py",
+        "while uncompressed_data_size > chunk_size:",
+        "while uncompressed_data_size >= chunk_size:")
+    rep("helpers/CompressionHelper.py",
+        "if len(compressed_data) > chunk_size:",
+        "if len(compressed_data) >= chunk_size:")
+
+    rep("helpers/TypeTreeNode.py",
+        '    def parse_blob(cls, reader: EndianBinaryReader, version: int) -> TypeTreeNode:\n'
+        '        node_count = reader.read_int()\n',
+        '    def parse_blob(cls, reader: EndianBinaryReader, version: int) -> TypeTreeNode:\n'
+        '        if version >= 23:\n'
+        '            if reader.read_bytes(4) != b"mhtt":\n'
+        '                raise ValueError("Invalid type tree blob magic")\n'
+        '            format_version = reader.read_int()\n'
+        '            if format_version != version:\n'
+        '                raise ValueError("Inconsistent type tree format version detected")\n'
+        '        node_count = reader.read_int()\n')
+    rep("helpers/TypeTreeNode.py",
+        '        # write blob\n        writer.write_int(node_count)\n',
+        '        # write blob\n'
+        '        if version >= 23:\n'
+        '            writer.write(b"mhtt")\n'
+        '            writer.write_int(version)\n'
+        '        writer.write_int(node_count)\n')
+    rep("files/SerializedFile.py",
+        '    # 21+\n    type_dependencies: Optional[Tuple[int, ...]] = None\n',
+        '    # 21+\n    type_dependencies: Optional[Tuple[int, ...]] = None\n'
+        '    # 23+\n    type_tree_content_hash: Optional[bytes] = None\n'
+        '    type_tree_serialized_size: Optional[int] = None\n')
+    rep("files/SerializedFile.py",
+        '        if serialized_file._enable_type_tree:\n'
+        '            if version >= 12 or version == 10:\n'
+        '                self.node = TypeTreeNode.parse_blob(reader, version)\n',
+        '        if serialized_file._enable_type_tree:\n'
+        '            if version >= 23:\n'
+        '                self.type_tree_content_hash = reader.read_bytes(16)\n'
+        '                self.type_tree_serialized_size = reader.read_int()\n'
+        '            if version >= 12 or version == 10:\n'
+        '                if version < 23 or self.type_tree_serialized_size:\n'
+        '                    self.node = TypeTreeNode.parse_blob(reader, version)\n')
+    rep("files/SerializedFile.py",
+        '        if serialized_file._enable_type_tree:\n'
+        '            assert self.node is not None\n'
+        '            if version >= 12 or version == 10:\n'
+        '                self.node.dump_blob(writer, version)\n',
+        '        if serialized_file._enable_type_tree:\n'
+        '            if version >= 23:\n'
+        '                assert self.type_tree_content_hash is not None\n'
+        '                writer.write_bytes(self.type_tree_content_hash)\n'
+        '            if version >= 12 or version == 10:\n'
+        '                if version >= 23:\n'
+        '                    blob_writer = EndianBinaryWriter(endian=writer.endian)\n'
+        '                    if self.node is not None:\n'
+        '                        self.node.dump_blob(blob_writer, version)\n'
+        '                    blob_data = blob_writer.bytes\n'
+        '                    writer.write_int(len(blob_data))\n'
+        '                    writer.write(blob_data)\n'
+        '                elif self.node is not None:\n'
+        '                    self.node.dump_blob(writer, version)\n')
+    rep("helpers/TypeTreeHelper.py",
+        '    elif node.m_Type == "TypelessData":\n'
+        '        value = [reader.read_bytes() for _ in range(size)]\n',
+        '    elif node.m_Type == "TypelessData":\n'
+        '        value = [reader.read_byte_array() for _ in range(size)]\n')
+    rep("helpers/MeshHelper.py",
+        '    def get_triangles(self) -> List[List[Tuple[int, ...]]]:\n'
+        '        assert self.m_IndexBuffer is not None\n'
+        '        assert self.src.m_SubMeshes is not None\n',
+        '    def get_triangles(self) -> List[List[Tuple[int, ...]]]:\n'
+        '        assert self.src.m_SubMeshes is not None\n'
+        '        if self.m_IndexBuffer is None:\n'
+        '            if any(m_SubMesh.indexCount for m_SubMesh in self.src.m_SubMeshes):\n'
+        '                raise ValueError("Failed getting triangles. The submeshes have indices, but the mesh has none.")\n'
+        '            return [[] for _ in self.src.m_SubMeshes]\n')
+
+    for module in unitypy.rglob("*.py"):
+        ast.parse(module.read_text(encoding="utf-8"))
+    print("UnityPy 1.25.4 compatibility patches and Python syntax checks passed.")
