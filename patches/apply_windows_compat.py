@@ -9,6 +9,45 @@ if len(sys.argv) != 2:
 path = Path(sys.argv[1])
 source = path.read_text(encoding="utf-8")
 
+# Keep the quality option in the converter's actual dataclass API. The bridge
+# already passes this keyword; without this field conversion fails at startup.
+module = ast.parse(source)
+options_class = next(
+    (node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "ConvertOptions"),
+    None,
+)
+if options_class is None:
+    raise SystemExit("ConvertOptions class not found")
+quality_field = any(
+    isinstance(node, ast.AnnAssign)
+    and isinstance(node.target, ast.Name)
+    and node.target.id == "texture_quality"
+    for node in options_class.body
+)
+if not quality_field:
+    first_method = next(
+        (node for node in options_class.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))),
+        None,
+    )
+    if first_method is None:
+        insert_line = options_class.end_lineno
+    else:
+        insert_line = first_method.lineno - 1
+    lines = source.splitlines(keepends=True)
+    lines.insert(insert_line, '    texture_quality: str = "high"\\n')
+    source = "".join(lines)
+module = ast.parse(source)
+options_class = next(
+    node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "ConvertOptions"
+)
+if not any(
+    isinstance(node, ast.AnnAssign)
+    and isinstance(node.target, ast.Name)
+    and node.target.id == "texture_quality"
+    for node in options_class.body
+):
+    raise SystemExit("ConvertOptions.texture_quality field was not added")
+
 anchor = "METAL_SHADER_PLATFORM = 14\n"
 helpers = '''METAL_SHADER_PLATFORM = 14
 
