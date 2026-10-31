@@ -175,7 +175,7 @@ def run_conversion(
     shader_path: str,
     output_path: str,
     display_name: str,
-    texture_quality: str = "balanced",
+    texture_quality: str = "high",
     create_zip: bool = True,
     full_validation: bool = False,
     preserve_shadows: bool = True,
