@@ -76,6 +76,9 @@ jobs:
           xcrun --sdk iphoneos nm -gU "$framework/AstcEncoder" | grep -q '_mlbb_astc_encode_rgba'
           echo "Native ARM64 ASTC encoder built."
 
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
       - name: Generate Isha Xcode project and apply original app identity
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
