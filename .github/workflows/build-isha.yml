@@ -171,6 +171,17 @@ jobs:
           try png.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
           SWIFT
           swift /tmp/make_isha_icon.swift "$PWD/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("project.yml")
+          lines = path.read_text().splitlines()
+          output = []
+          for line in lines:
+              output.append(line)
+              if line.startswith("      - framework: Frameworks/") and not line.endswith("Python.framework"):
+                  output.append("        link: false")
+          path.write_text("\\n".join(output) + "\\n")
+          PY
           xcodegen generate
 
       - name: Patch ASTC quality selection
