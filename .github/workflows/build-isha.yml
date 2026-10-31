@@ -51,8 +51,8 @@ jobs:
             astcenc_weight_align.cpp
             astcenc_weight_quant_xfer_tables.cpp
           )
-          for name in "\${sources[@]}"; do
-            xcrun --sdk iphoneos clang++ -std=c++14 -O3 -fPIC -fvisibility=hidden -fno-fast-math -ffp-contract=off -pthread -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -DASTCENC_NEON=1 -DASTCENC_SVE=0 -DASTCENC_SSE=0 -DASTCENC_AVX=0 -DASTCENC_POPCNT=0 -DASTCENC_F16C=0 -I "$source_dir" -c "$source_dir/$name" -o "$objects/\${name%.cpp}.o"
+          for name in "${sources[@]}"; do
+            xcrun --sdk iphoneos clang++ -std=c++14 -O3 -fPIC -fvisibility=hidden -fno-fast-math -ffp-contract=off -pthread -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -DASTCENC_NEON=1 -DASTCENC_SVE=0 -DASTCENC_SSE=0 -DASTCENC_AVX=0 -DASTCENC_POPCNT=0 -DASTCENC_F16C=0 -I "$source_dir" -c "$source_dir/$name" -o "$objects/${name%.cpp}.o"
           done
           xcrun --sdk iphoneos clang++ -std=c++14 -O3 -fPIC -fvisibility=hidden -fno-fast-math -ffp-contract=off -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -I "$source_dir" -c patches/astc_encoder_ffi.cpp -o "$objects/astc_encoder_ffi.o"
           xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -Wl,-install_name,@rpath/AstcEncoder.framework/AstcEncoder -Wl,-dead_strip "$objects"/*.o -o "$framework/AstcEncoder"
