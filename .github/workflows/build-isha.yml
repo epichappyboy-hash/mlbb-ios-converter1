@@ -293,12 +293,6 @@ jobs:
           ]) + "\n"
           source = source[:validation.start()] + replacement + source[validation.end():]
 
-          if "Starting bundle" not in source:
-              source = source.replace(
-                  "                    self._convert_bundle(source, target)\n                    self.jobs.append((source, target))",
-                  "                    self.log(f\\"Starting bundle {number}/{len(sources)}: {source.name}\\")\n                    self._convert_bundle(source, target)\n                    gc.collect()\n                    self.log(f\\"Finished bundle {number}/{len(sources)}: {source.name}\\")\n                    self.jobs.append((source, target))",
-                  1,
-              )
           if "compresslevel=9" in source:
               source = source.replace("compresslevel=9", "compresslevel=1", 1)
 
