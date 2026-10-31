@@ -1,0 +1,257 @@
+name: Build Isha Converter iOS ASTC Update
+on:
+  push:
+    branches: [isha-astc-update]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reassemble Isha-compatible Xcode source package
+        run: |
+          set -euo pipefail
+          cat MLBB_iOS_Converter_Project.zip.part* > MLBB_iOS_Converter_Project.zip
+          unzip -q MLBB_iOS_Converter_Project.zip -d reconstructed
+          test -f reconstructed/MLBB_iOS_Converter/Sources/Info.plist
+          test -f reconstructed/MLBB_iOS_Converter/app/ios_shaders/ShaderVariants_add.unity3d
+
+      - name: Build native ARM64 ASTC encoder framework
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch 5.7.0 https://github.com/ARM-software/astc-encoder.git /tmp/astc-encoder
+          project="reconstructed/MLBB_iOS_Converter"
+          source_dir="/tmp/astc-encoder/Source"
+          framework="$project/Frameworks/AstcEncoder.framework"
+          objects="/tmp/astc-encoder-objects"
+          mkdir -p "$framework" "$objects"
+          sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          sources=(
+            astcenc_averages_and_directions.cpp
+            astcenc_block_sizes.cpp
+            astcenc_color_quantize.cpp
+            astcenc_color_unquantize.cpp
+            astcenc_compress_symbolic.cpp
+            astcenc_compute_variance.cpp
+            astcenc_decompress_symbolic.cpp
+            astcenc_diagnostic_trace.cpp
+            astcenc_entry.cpp
+            astcenc_find_best_partitioning.cpp
+            astcenc_ideal_endpoints_and_weights.cpp
+            astcenc_image.cpp
+            astcenc_integer_sequence.cpp
+            astcenc_mathlib.cpp
+            astcenc_mathlib_softfloat.cpp
+            astcenc_partition_tables.cpp
+            astcenc_percentile_tables.cpp
+            astcenc_pick_best_endpoint_format.cpp
+            astcenc_quantization.cpp
+            astcenc_symbolic_physical.cpp
+            astcenc_weight_align.cpp
+            astcenc_weight_quant_xfer_tables.cpp
+          )
+          for name in "\${sources[@]}"; do
+            xcrun --sdk iphoneos clang++ -std=c++14 -O3 -fPIC -fvisibility=hidden -fno-fast-math -ffp-contract=off -pthread -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -DASTCENC_NEON=1 -DASTCENC_SVE=0 -DASTCENC_SSE=0 -DASTCENC_AVX=0 -DASTCENC_POPCNT=0 -DASTCENC_F16C=0 -I "$source_dir" -c "$source_dir/$name" -o "$objects/\${name%.cpp}.o"
+          done
+          xcrun --sdk iphoneos clang++ -std=c++14 -O3 -fPIC -fvisibility=hidden -fno-fast-math -ffp-contract=off -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -I "$source_dir" -c patches/astc_encoder_ffi.cpp -o "$objects/astc_encoder_ffi.o"
+          xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -Wl,-install_name,@rpath/AstcEncoder.framework/AstcEncoder -Wl,-dead_strip "$objects"/*.o -o "$framework/AstcEncoder"
+          cp /tmp/astc-encoder/LICENSE.txt "$framework/LICENSE-ASTC.txt"
+          cat > "$framework/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleExecutable</key><string>AstcEncoder</string>
+            <key>CFBundleIdentifier</key><string>com.isha.converter.astcencoder</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleName</key><string>AstcEncoder</string>
+            <key>CFBundlePackageType</key><string>FMWK</string>
+            <key>CFBundleShortVersionString</key><string>5.7.0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>MinimumOSVersion</key><string>15.0</string>
+            <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
+          </dict></plist>
+          PLIST
+          xcrun --sdk iphoneos nm -gU "$framework/AstcEncoder" | grep -q '_mlbb_astc_encode_rgba'
+          echo "Native ARM64 ASTC encoder built."
+
+      - name: Generate Isha Xcode project and apply original app identity
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          set -euo pipefail
+          python3 scripts/generate_project.py
+          cp ../../patches/IshaConverterApp.swift Sources/MLBBConverterApp.swift
+          cp ../../patches/IshaPythonConverter.swift Sources/PythonConverter.swift
+          python3 - <<'PY'
+          from pathlib import Path
+          import plistlib
+
+          project = Path("project.yml")
+          source = project.read_text()
+          source = source.replace("MLBBConverter", "IshaConverteriOS")
+          source = source.replace("com.codex.mlbbconverter", "com.isha.converter.ios")
+          source = source.replace("com.codex", "com.isha")
+          project.write_text(source)
+
+          plist_path = Path("Sources/Info.plist")
+          info = plistlib.loads(plist_path.read_bytes())
+          info["CFBundleIdentifier"] = "com.isha.converter.ios"
+          info["CFBundleDisplayName"] = "Isha Converter iOS"
+          info["CFBundleName"] = "Isha Converter iOS"
+          info["CFBundleExecutable"] = "IshaConverteriOS"
+          info["CFBundlePackageType"] = "APPL"
+          info["CFBundleShortVersionString"] = "1.1"
+          info["CFBundleVersion"] = "69"
+          info["MinimumOSVersion"] = "15.0"
+          info["CFBundleIconName"] = "AppIcon"
+          info["CFBundleDocumentTypes"] = [{
+              "CFBundleTypeName": "Unity asset bundle",
+              "CFBundleTypeRole": "Editor",
+              "LSHandlerRank": "Alternate",
+              "LSItemContentTypes": ["public.zip-archive", "com.codex.unity3d"],
+          }]
+          plist_path.write_bytes(plistlib.dumps(info))
+          if "com.isha.converter.ios" not in project.read_text():
+              raise SystemExit("Isha bundle identifier was not applied to XcodeGen project")
+          PY
+          mkdir -p Sources/Assets.xcassets/AppIcon.appiconset
+          cat > Sources/Assets.xcassets/AppIcon.appiconset/Contents.json <<'JSON'
+          {
+            "images": [
+              {
+                "filename": "AppIcon.png",
+                "idiom": "universal",
+                "platform": "ios",
+                "size": "1024x1024"
+              }
+            ],
+            "info": {
+              "author": "xcode",
+              "version": 1
+            }
+          }
+          JSON
+          cat > /tmp/make_isha_icon.swift <<'SWIFT'
+          import AppKit
+          let size = 1024
+          let image = NSImage(size: NSSize(width: size, height: size))
+          image.lockFocus()
+          NSColor(calibratedRed: 0.055, green: 0.063, blue: 0.082, alpha: 1).setFill()
+          NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: size, height: size), xRadius: 225, yRadius: 225).fill()
+          if let symbol = NSImage(systemSymbolName: "arrow.left.arrow.right.square", accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 570, weight: .semibold))?.withTintColor(NSColor(calibratedRed: 0.24, green: 0.57, blue: 1.0, alpha: 1)) {
+              symbol.draw(in: NSRect(x: 150, y: 150, width: 724, height: 724))
+          }
+          image.unlockFocus()
+          let rep = NSBitmapImageRep(data: image.tiffRepresentation!)!
+          let png = rep.representation(using: .png, properties: [:])!
+          try png.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
+          SWIFT
+          swift /tmp/make_isha_icon.swift "$PWD/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
+          xcodegen generate
+
+      - name: Patch ASTC quality selection
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          converter = Path("app/mlbb_ios_converter.py")
+          source = converter.read_text()
+          options_line = "    preserve_shadows: bool = True\n"
+          quality_line = '    texture_quality: str = "balanced"\n'
+          if quality_line.rstrip("\n") not in source:
+              if options_line not in source:
+                  raise SystemExit("Could not find ConvertOptions fields")
+              source = source.replace(options_line, options_line + quality_line, 1)
+
+          target_pattern = re.compile(r"(?m)^(?P<indent>[ \t]*)target_format=TextureFormat\.RGBA32,$")
+          def target_replacement(match):
+              indent = match.group("indent")
+              return (
+                  indent + "target_format={\n"
+                  + indent + '    "high": TextureFormat.ASTC_RGBA_4x4,\n'
+                  + indent + '    "balanced": TextureFormat.ASTC_RGBA_6x6,\n'
+                  + indent + '    "small": TextureFormat.ASTC_RGBA_8x8,\n'
+                  + indent + "}[self.options.texture_quality],"
+              )
+          source, target_count = target_pattern.subn(target_replacement, source, count=1)
+          if target_count != 1 and "TextureFormat.ASTC_RGBA_6x6" not in source:
+              raise SystemExit("Could not connect ASTC target formats to Texture2D conversion")
+
+          old_validation = "\n".join([
+              "                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):",
+              '                        raise ConversionError(f"Texture is not RGBA32: {texture.m_Name}")',
+          ])
+          new_validation = "\n".join([
+              "                    expected_texture_format = {",
+              '                        "high": TextureFormat.ASTC_RGBA_4x4,',
+              '                        "balanced": TextureFormat.ASTC_RGBA_6x6,',
+              '                        "small": TextureFormat.ASTC_RGBA_8x8,',
+              "                    }[self.options.texture_quality]",
+              "                    if int(texture.m_TextureFormat) != int(expected_texture_format):",
+              '                        raise ConversionError(f"Texture is not in selected ASTC format ({self.options.texture_quality}): {texture.m_Name}")',
+          ])
+          if old_validation in source:
+              source = source.replace(old_validation, new_validation, 1)
+          elif new_validation not in source:
+              raise SystemExit("Could not update ASTC output validation")
+
+          if "Starting bundle" not in source:
+              source = source.replace(
+                  "                    self._convert_bundle(source, target)\n                    self.jobs.append((source, target))",
+                  "                    self.log(f\"Starting bundle {number}/{len(sources)}: {source.name}\")\n                    self._convert_bundle(source, target)\n                    gc.collect()\n                    self.log(f\"Finished bundle {number}/{len(sources)}: {source.name}\")\n                    self.jobs.append((source, target))",
+                  1,
+              )
+          if "compresslevel=9" in source:
+              source = source.replace("compresslevel=9", "compresslevel=1", 1)
+          if "ASTC_RGBA_6x6" not in source or "texture_quality: str = " not in source:
+              raise SystemExit("ASTC quality selection was not fully applied")
+          converter.write_text(source)
+          PY
+          cp ../../patches/converter_bridge.py app/converter_bridge.py
+          python3 -m py_compile app/converter_bridge.py app/mlbb_ios_converter.py
+
+      - name: Build unsigned Isha iPhone app
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: xcodebuild -project IshaConverteriOS.xcodeproj -scheme IshaConverteriOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+
+      - name: Restore app resources and verify complete Isha bundle
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          set -euo pipefail
+          app="build/Build/Products/Release-iphoneos/IshaConverteriOS.app"
+          mkdir -p "$app/app" "$app/app_packages" "$app/python"
+          ditto app "$app/app"
+          ditto app_packages "$app/app_packages"
+          ditto python "$app/python"
+          test -f "$app/app/mlbb_ios_converter.py"
+          test -f "$app/app/converter_bridge.py"
+          test -f "$app/app/ios_shaders/ShaderVariants.unity3d"
+          test -f "$app/app/ios_shaders/ShaderVariantsInBattle.unity3d"
+          test -f "$app/app/ios_shaders/ShaderVariants_add.unity3d"
+          test -f "$app/app_packages/UnityPy/export/Texture2DConverter.py"
+          test -f "$app/Frameworks/AstcEncoder.framework/AstcEncoder"
+          test -f "$app/python/lib/python3.14/encodings/__init__.py"
+          test -d "$app/python/lib/python3.14/lib-dynload"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist" | grep -q 'com.isha.converter.ios'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app/Info.plist" | grep -q 'Isha Converter iOS'
+          echo "Verified Isha app resources, shaders, Python dependencies, and ASTC framework."
+          du -sh "$app"
+
+      - name: Package Isha update IPA
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          set -euo pipefail
+          mkdir -p package/Payload
+          cp -R build/Build/Products/Release-iphoneos/IshaConverteriOS.app package/Payload/
+          ditto -c -k --sequesterRsrc --keepParent package/Payload Isha_Converter_iOS_ASTC_Update.ipa
+          unzip -t Isha_Converter_iOS_ASTC_Update.ipa
+          ls -lh Isha_Converter_iOS_ASTC_Update.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Isha_Converter_iOS_ASTC_Update_unsigned
+          path: reconstructed/MLBB_iOS_Converter/Isha_Converter_iOS_ASTC_Update.ipa
+          if-no-files-found: error
