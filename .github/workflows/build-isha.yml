@@ -105,7 +105,7 @@ jobs:
           info["CFBundleExecutable"] = "IshaConverteriOS"
           info["CFBundlePackageType"] = "APPL"
           info["CFBundleShortVersionString"] = "1.4"
-          info["CFBundleVersion"] = "81"
+          info["CFBundleVersion"] = "82"
           info["MinimumOSVersion"] = "15.0"
           info["CFBundleIconName"] = "AppIcon"
 
@@ -203,6 +203,14 @@ jobs:
           python3 ../../patches/apply_windows_compat.py app/mlbb_ios_converter.py
           cp ../../patches/converter_bridge.py app/converter_bridge.py
           python3 -m py_compile app/converter_bridge.py app/mlbb_ios_converter.py
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          tree = ast.parse(Path("app/mlbb_ios_converter.py").read_text())
+          options = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ConvertOptions")
+          assert any(isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == "texture_quality" for n in options.body), "ConvertOptions.texture_quality missing"
+          print("Verified: ConvertOptions accepts texture_quality.")
+          PY
       - name: Restore Build 68 optional FMOD import behavior
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
