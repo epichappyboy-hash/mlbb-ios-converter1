@@ -313,15 +313,19 @@ jobs:
           if target_count != 1 and "TextureFormat.ASTC_RGBA_6x6" not in source:
               raise SystemExit("Could not connect ASTC target formats to Texture2D conversion")
 
-          old_validation = """                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):
-                        raise ConversionError(f"Texture is not RGBA32: {texture.m_Name}")"""
-          new_validation = """                    expected_texture_format = {
-                        "high": TextureFormat.ASTC_RGBA_4x4,
-                        "balanced": TextureFormat.ASTC_RGBA_6x6,
-                        "small": TextureFormat.ASTC_RGBA_8x8,
-                    }[self.options.texture_quality]
-                    if int(texture.m_TextureFormat) != int(expected_texture_format):
-                        raise ConversionError(f"Texture is not in selected ASTC format ({self.options.texture_quality}): {texture.m_Name}")"""
+          old_validation = "\\n".join([
+              "                    if int(texture.m_TextureFormat) != int(TextureFormat.RGBA32):",
+              "                        raise ConversionError(f\\\"Texture is not RGBA32: {texture.m_Name}\\\")",
+          ])
+          new_validation = "\\n".join([
+              "                    expected_texture_format = {",
+              '                        "high": TextureFormat.ASTC_RGBA_4x4,',
+              '                        "balanced": TextureFormat.ASTC_RGBA_6x6,',
+              '                        "small": TextureFormat.ASTC_RGBA_8x8,',
+              "                    }[self.options.texture_quality]",
+              "                    if int(texture.m_TextureFormat) != int(expected_texture_format):",
+              '                        raise ConversionError(f"Texture is not in selected ASTC format ({self.options.texture_quality}): {texture.m_Name}")',
+          ])
           if old_validation in source:
               source = source.replace(old_validation, new_validation, 1)
           elif new_validation not in source:
