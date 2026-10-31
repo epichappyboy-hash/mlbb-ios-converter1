@@ -298,21 +298,21 @@ jobs:
           converter = Path("app/mlbb_ios_converter.py")
           source = converter.read_text()
 
-          options_line = '    preserve_shadows: bool = True\\n'
-          quality_line = '    texture_quality: str = "balanced"\\n'
-          if quality_line.rstrip("\\n") not in source:
+          options_line = '    preserve_shadows: bool = True\n'
+          quality_line = '    texture_quality: str = "balanced"\n'
+          if quality_line.rstrip("\n") not in source:
               if options_line not in source:
                   raise SystemExit("Could not find ConvertOptions fields")
               source = source.replace(options_line, options_line + quality_line, 1)
 
-          target_pattern = re.compile(r'(?m)^(?P<indent>[ \\t]*)target_format=TextureFormat\\.RGBA32,$')
+          target_pattern = re.compile(r'(?m)^(?P<indent>[ \t]*)target_format=TextureFormat\.RGBA32,$')
           def target_replacement(match):
               indent = match.group("indent")
               return (
-                  indent + "target_format={\\n"
-                  + indent + '    "high": TextureFormat.ASTC_RGBA_4x4,\\n'
-                  + indent + '    "balanced": TextureFormat.ASTC_RGBA_6x6,\\n'
-                  + indent + '    "small": TextureFormat.ASTC_RGBA_8x8,\\n'
+                  indent + "target_format={\n"
+                  + indent + '    "high": TextureFormat.ASTC_RGBA_4x4,\n'
+                  + indent + '    "balanced": TextureFormat.ASTC_RGBA_6x6,\n'
+                  + indent + '    "small": TextureFormat.ASTC_RGBA_8x8,\n'
                   + indent + "}[self.options.texture_quality],"
               )
           source, target_count = target_pattern.subn(target_replacement, source, count=1)
@@ -320,31 +320,31 @@ jobs:
               raise SystemExit("Could not connect ASTC target formats to Texture2D conversion")
 
           validation_pattern = re.compile(
-              r'(?m)^(?P<indent>[ \\t]*)texture_format = int\\(texture\\.m_TextureFormat\\)\\n'
-              r'(?P=indent)if texture_format != int\\(TextureFormat\\.RGBA32\\) and not \\(48 <= texture_format <= 59\\):\\n'
-              r'(?P=indent)    raise ConversionError\\(f"Texture format is not iOS-ready: \\{texture\\.m_Name\\}"\\)\\n'
-              r'(?P=indent)if 48 <= texture_format <= 59:\\n'
+              r'(?m)^(?P<indent>[ \t]*)texture_format = int\(texture\.m_TextureFormat\)\n'
+              r'(?P=indent)if texture_format != int\(TextureFormat\.RGBA32\) and not \(48 <= texture_format <= 59\):\n'
+              r'(?P=indent)    raise ConversionError\(f"Texture format is not iOS-ready: \{texture\.m_Name\}"\)\n'
+              r'(?P=indent)if 48 <= texture_format <= 59:\n'
               r'(?P=indent)    continue'
           )
           def validation_replacement(match):
               indent = match.group("indent")
               return (
-                  indent + "texture_format = int(texture.m_TextureFormat)\\n"
-                  + indent + "if 48 <= texture_format <= 59:\\n"
-                  + indent + "    continue\\n"
-                  + indent + "expected_texture_format = {\\n"
-                  + indent + '    "high": TextureFormat.ASTC_RGBA_4x4,\\n'
-                  + indent + '    "balanced": TextureFormat.ASTC_RGBA_6x6,\\n'
-                  + indent + '    "small": TextureFormat.ASTC_RGBA_8x8,\\n'
-                  + indent + "}[self.options.texture_quality]\\n"
-                  + indent + "if texture_format != int(expected_texture_format):\\n"
+                  indent + "texture_format = int(texture.m_TextureFormat)\n"
+                  + indent + "if 48 <= texture_format <= 59:\n"
+                  + indent + "    continue\n"
+                  + indent + "expected_texture_format = {\n"
+                  + indent + '    "high": TextureFormat.ASTC_RGBA_4x4,\n'
+                  + indent + '    "balanced": TextureFormat.ASTC_RGBA_6x6,\n'
+                  + indent + '    "small": TextureFormat.ASTC_RGBA_8x8,\n'
+                  + indent + "}[self.options.texture_quality]\n"
+                  + indent + "if texture_format != int(expected_texture_format):\n"
                   + indent + '    raise ConversionError(f"Texture is not in the selected ASTC format: {texture.m_Name}")'
               )
           source, validation_count = validation_pattern.subn(validation_replacement, source, count=1)
           if validation_count != 1 and "Texture is not in the selected ASTC format" not in source:
               raise SystemExit("Could not update texture validation for selected ASTC format")
 
-          if quality_line.rstrip("\\n") not in source or "ASTC_RGBA_6x6" not in source:
+          if quality_line.rstrip("\n") not in source or "ASTC_RGBA_6x6" not in source:
               raise SystemExit("ASTC quality configuration was not applied")
           converter.write_text(source)
           PY
