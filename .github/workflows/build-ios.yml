@@ -1,7 +1,7 @@
 name: Build standalone MLBB iOS Converter
 on:
   push:
-    branches: [main]
+    branches: [main, feature/astc-texture-quality]
   workflow_dispatch:
 jobs:
   build:
@@ -12,6 +12,65 @@ jobs:
         run: |
           cat MLBB_iOS_Converter_Project.zip.part* > MLBB_iOS_Converter_Project.zip
           unzip -q MLBB_iOS_Converter_Project.zip -d reconstructed
+      - name: Build native ARM64 ASTC encoder framework
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch 5.7.0 https://github.com/ARM-software/astc-encoder.git /tmp/astc-encoder
+          project="reconstructed/MLBB_iOS_Converter"
+          source_dir="/tmp/astc-encoder/Source"
+          framework="$project/Frameworks/AstcEncoder.framework"
+          objects="/tmp/astc-encoder-objects"
+          mkdir -p "$framework" "$objects"
+          sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          sources=(
+            astcenc_averages_and_directions.cpp
+            astcenc_block_sizes.cpp
+            astcenc_color_quantize.cpp
+            astcenc_color_unquantize.cpp
+            astcenc_compress_symbolic.cpp
+            astcenc_compute_variance.cpp
+            astcenc_decompress_symbolic.cpp
+            astcenc_diagnostic_trace.cpp
+            astcenc_entry.cpp
+            astcenc_find_best_partitioning.cpp
+            astcenc_ideal_endpoints_and_weights.cpp
+            astcenc_image.cpp
+            astcenc_integer_sequence.cpp
+            astcenc_mathlib.cpp
+            astcenc_mathlib_softfloat.cpp
+            astcenc_partition_tables.cpp
+            astcenc_percentile_tables.cpp
+            astcenc_pick_best_endpoint_format.cpp
+            astcenc_quantization.cpp
+            astcenc_symbolic_physical.cpp
+            astcenc_weight_align.cpp
+            astcenc_weight_quant_xfer_tables.cpp
+          )
+          for name in "${sources[@]}"; do
+            xcrun --sdk iphoneos clang++ -std=c++14 -O3 -fPIC -fvisibility=hidden -fno-fast-math -ffp-contract=off -pthread -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -DASTCENC_NEON=1 -DASTCENC_SVE=0 -DASTCENC_SSE=0 -DASTCENC_AVX=0 -DASTCENC_POPCNT=0 -DASTCENC_F16C=0 -I "$source_dir" -c "$source_dir/$name" -o "$objects/${name%.cpp}.o"
+          done
+          xcrun --sdk iphoneos clang++ -std=c++14 -O3 -fPIC -fvisibility=hidden -fno-fast-math -ffp-contract=off -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -I "$source_dir" -c patches/astc_encoder_ffi.cpp -o "$objects/astc_encoder_ffi.o"
+          xcrun --sdk iphoneos clang++ -dynamiclib -arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -Wl,-install_name,@rpath/AstcEncoder.framework/AstcEncoder -Wl,-dead_strip "$objects"/*.o -o "$framework/AstcEncoder"
+          cp /tmp/astc-encoder/LICENSE "$framework/LICENSE-ASTC.txt"
+          cat > "$framework/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleExecutable</key><string>AstcEncoder</string>
+            <key>CFBundleIdentifier</key><string>com.epichappyboy.mlbb.astcencoder</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleName</key><string>AstcEncoder</string>
+            <key>CFBundlePackageType</key><string>FMWK</string>
+            <key>CFBundleShortVersionString</key><string>5.7.0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>MinimumOSVersion</key><string>15.0</string>
+            <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
+          </dict></plist>
+          PLIST
+          file "$framework/AstcEncoder"
+          xcrun --sdk iphoneos nm -gU "$framework/AstcEncoder" | grep -q '_mlbb_astc_encode_rgba'
+          echo "Built ARM64 ASTC encoder framework"
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project and configure Python extensions
@@ -38,12 +97,17 @@ jobs:
           path = Path("Sources/PythonConverter.swift")
           source = path.read_text()
           source = source.replace(
+              "func convert(input: URL, outputDirectory: URL, completion:",
+              "func convert(input: URL, outputDirectory: URL, textureQuality: String, completion:",
+              1,
+          )
+          source = source.replace(
               "bridge.run_conversion.throwing(",
               "bridge.run_conversion.throwing.dynamicallyCall(withArguments: [",
           )
           source = source.replace(
               "input.lastPathComponent\n                )",
-              "input.lastPathComponent\n                ])",
+              "input.lastPathComponent,\n                    textureQuality\n                ])",
           )
           source = source.replace(
               "let jsonText = try raw.as(String.self)",
@@ -223,6 +287,82 @@ jobs:
           if not patched_bridge.is_file():
               raise SystemExit("Missing patches/converter_bridge.py")
           bridge.write_text(patched_bridge.read_text())
+          PY
+      - name: Apply ASTC texture quality formats
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          converter = Path("app/mlbb_ios_converter.py")
+          source = converter.read_text()
+
+          options = "    preserve_shadows: bool = True\n"
+          if "    texture_quality: str = \"balanced\"" not in source:
+              if options not in source:
+                  raise SystemExit("Could not find ConvertOptions fields")
+              source = source.replace(options, options + "    texture_quality: str = \"balanced\"\n", 1)
+
+          preserved_astc = """                    texture = obj.read()
+                    source_format = int(texture.m_TextureFormat)
+                    # ASTC is a cross-platform GPU format supported by modern iPhones.
+                    # Preserve its compressed bytes instead of decoding a large image on-device.
+                    if 48 <= source_format <= 59:
+                        self.stats.textures += 1
+                        continue
+                    image = texture.image.convert("RGBA")"""
+          source = source.replace(
+              preserved_astc,
+              """                    texture = obj.read()
+                    image = texture.image.convert("RGBA")""",
+              1,
+          )
+
+          old_texture = """                    texture = obj.read()
+                    image = texture.image.convert("RGBA")
+                    texture.set_image(
+                        image,
+                        target_format=TextureFormat.RGBA32,
+                        mipmap_count=1,
+                    )"""
+          new_texture = """                    texture = obj.read()
+                    image = texture.image.convert("RGBA")
+                    target_texture_format = {
+                        "high": TextureFormat.ASTC_RGBA_4x4,
+                        "balanced": TextureFormat.ASTC_RGBA_6x6,
+                        "small": TextureFormat.ASTC_RGBA_8x8,
+                    }.get(self.options.texture_quality)
+                    if target_texture_format is None:
+                        raise ConversionError(f"Unknown texture quality: {self.options.texture_quality}")
+                    texture.set_image(
+                        image,
+                        target_format=target_texture_format,
+                        mipmap_count=1,
+                    )"""
+          if old_texture in source:
+              source = source.replace(old_texture, new_texture, 1)
+          elif new_texture not in source:
+              raise SystemExit("Could not connect ASTC target format to Texture2D conversion")
+
+          old_validation = """                    texture_format = int(texture.m_TextureFormat)
+                    if texture_format != int(TextureFormat.RGBA32) and not (48 <= texture_format <= 59):
+                        raise ConversionError(f"Texture format is not iOS-ready: {texture.m_Name}")
+                    if 48 <= texture_format <= 59:
+                        continue"""
+          new_validation = """                    expected_texture_format = {
+                        "high": TextureFormat.ASTC_RGBA_4x4,
+                        "balanced": TextureFormat.ASTC_RGBA_6x6,
+                        "small": TextureFormat.ASTC_RGBA_8x8,
+                    }[self.options.texture_quality]
+                    if int(texture.m_TextureFormat) != int(expected_texture_format):
+                        raise ConversionError(f"Texture is not in the selected ASTC format: {texture.m_Name}")"""
+          if old_validation in source:
+              source = source.replace(old_validation, new_validation, 1)
+          elif new_validation not in source:
+              raise SystemExit("Could not update texture-format validation")
+          if "texture_quality: str = \"balanced\"" not in source or "ASTC_RGBA_6x6" not in source:
+              raise SystemExit("ASTC quality configuration was not applied")
+          converter.write_text(source)
           PY
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
