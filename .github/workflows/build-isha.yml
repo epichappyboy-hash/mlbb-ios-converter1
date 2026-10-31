@@ -210,7 +210,8 @@ jobs:
           options = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ConvertOptions")
           assert any(isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == "texture_quality" for n in options.body), "ConvertOptions.texture_quality missing"
           print("Verified: ConvertOptions accepts texture_quality.")
-          python3 -m compileall -q app_packages/UnityPy
+          import subprocess
+          subprocess.run(["python3", "-m", "compileall", "-q", "app_packages/UnityPy"], check=True)
           unitypy = Path("app_packages/UnityPy")
           assert '__version__ = "1.25.4"' in (unitypy / "__init__.py").read_text()
           assert "hdr: bool = False" in (unitypy / "export/Texture2DConverter.py").read_text()
