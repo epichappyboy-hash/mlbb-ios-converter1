@@ -57,9 +57,6 @@ struct IshaConverterView: View {
         documents.appendingPathComponent("Converted", isDirectory: true)
     }
 
-    private var supportedImportTypes: [UTType] {
-        [.zip, UTType(filenameExtension: "unity3d") ?? .data]
-    }
 
     var body: some View {
         ZStack {
@@ -83,12 +80,17 @@ struct IshaConverterView: View {
         .onOpenURL { url in
             importOpenedURL(url)
         }
-        .fileImporter(
-            isPresented: $showImporter,
-            allowedContentTypes: supportedImportTypes,
-            allowsMultipleSelection: false
-        ) { result in
-            importSelectedFile(result)
+        .sheet(isPresented: $showImporter) {
+            AssetDocumentPicker(
+                onPick: { selectedURL in
+                    showImporter = false
+                    importFile(from: selectedURL)
+                },
+                onCancel: {
+                    showImporter = false
+                }
+            )
+            .ignoresSafeArea()
         }
         .sheet(isPresented: $showOutputShare) {
             if let outputURL {
@@ -425,16 +427,7 @@ struct IshaConverterView: View {
         .disabled(isConverting)
     }
 
-    private func importSelectedFile(_ result: Result<[URL], Error>) {
-        do {
-            guard let selected = try result.get().first else { return }
-            importFile(from: selected)
-        } catch {
-            errorMessage = "Hindi mabasa ang napiling file: \(error.localizedDescription)"
-        }
-    }
-
-    // Handles ZIP/Unity files sent from the iOS Files app through Open In / Share.
+    // Handles custom UIDocumentPicker selection and the iOS Files "Open In" route.
     private func importOpenedURL(_ url: URL) {
         guard url.isFileURL else {
             errorMessage = "Hindi valid na local file URL ang ipinasa ng Files app."
@@ -446,7 +439,7 @@ struct IshaConverterView: View {
     private func importFile(from selected: URL) {
         let ext = selected.pathExtension.lowercased()
         guard ext == "unity3d" || ext == "zip" else {
-            errorMessage = "Hindi supported ang file na ito. Pumili ng .unity3d o .zip file."
+            errorMessage = "Hindi suportado ang file. Pumili ng .unity3d bundle o .zip file."
             return
         }
 
@@ -461,7 +454,7 @@ struct IshaConverterView: View {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: selected.path, isDirectory: &isDirectory),
                   !isDirectory.boolValue else {
-                throw IshaConverterError.conversionFailed("Hindi makita ang ZIP file o folder ang napili.")
+                throw IshaConverterError.conversionFailed("Hindi makita ang napiling ZIP file.")
             }
 
             let imports = documents.appendingPathComponent("Imported", isDirectory: true)
@@ -473,36 +466,18 @@ struct IshaConverterView: View {
                 UUID().uuidString + "_" + selected.lastPathComponent
             )
 
-            // Coordinate reads from Files/iCloud providers before copying into app storage.
-            let coordinator = NSFileCoordinator(filePresenter: nil)
-            var coordinationError: NSError?
-            var copyError: Error?
-            coordinator.coordinate(
-                readingItemAt: selected,
-                options: .withoutChanges,
-                error: &coordinationError
-            ) { readableURL in
-                do {
-                    try FileManager.default.copyItem(at: readableURL, to: destination)
-                } catch {
-                    copyError = error
-                }
-            }
+            // The build #68 picker uses asCopy: true. Copy that app-owned temporary URL
+            // into the converter's permanent Imported folder before releasing file access.
+            try FileManager.default.copyItem(at: selected, to: destination)
 
-            if let coordinationError {
-                throw coordinationError
-            }
-            if let copyError {
-                throw copyError
-            }
             guard FileManager.default.fileExists(atPath: destination.path) else {
-                throw IshaConverterError.conversionFailed("Hindi nakopya ang file mula sa Files app.")
+                throw IshaConverterError.conversionFailed("Hindi nakopya ang ZIP file sa app storage.")
             }
 
             inputURL = destination
             outputURL = nil
             status = "Handa nang i-convert: \(selected.lastPathComponent)"
-            conversionLog = "Input imported: \(selected.lastPathComponent)\nSource: Files / Document Picker\nTexture quality: \(textureQuality.uppercased())"
+            conversionLog = "Input imported: \(selected.lastPathComponent)\nSource: iOS Files document picker (copy mode)\nTexture quality: \(textureQuality.uppercased())"
             errorMessage = nil
         } catch {
             status = "Hindi na-import ang file: \(error.localizedDescription)"
@@ -560,4 +535,57 @@ struct IshaActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+
+// The same copy-mode document picker architecture used by working Isha build #68.
+struct AssetDocumentPicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick, onCancel: onCancel)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let unityType = UTType(filenameExtension: "unity3d", conformingTo: .data)
+            ?? UTType(exportedAs: "com.codex.unity3d", conformingTo: .data)
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.zip, unityType],
+            asCopy: true
+        )
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(
+        _ controller: UIDocumentPickerViewController,
+        context: Context
+    ) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onPick: (URL) -> Void
+        private let onCancel: () -> Void
+
+        init(onPick: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
+            self.onPick = onPick
+            self.onCancel = onCancel
+        }
+
+        func documentPicker(
+            _ controller: UIDocumentPickerViewController,
+            didPickDocumentsAt urls: [URL]
+        ) {
+            guard let url = urls.first else {
+                onCancel()
+                return
+            }
+            onPick(url)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onCancel()
+        }
+    }
 }
