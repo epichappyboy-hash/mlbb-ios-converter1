@@ -104,27 +104,27 @@ jobs:
           info["CFBundleName"] = "Isha Converter iOS"
           info["CFBundleExecutable"] = "IshaConverteriOS"
           info["CFBundlePackageType"] = "APPL"
-          info["CFBundleShortVersionString"] = "1.2"
-          info["CFBundleVersion"] = "70"
+          info["CFBundleShortVersionString"] = "1.3"
+          info["CFBundleVersion"] = "71"
           info["MinimumOSVersion"] = "15.0"
           info["CFBundleIconName"] = "AppIcon"
 
-          # Register the app as a document handler so Files can offer "Open in Isha".
+          # Match the working build #68 document registration exactly.
           info["LSSupportsOpeningDocumentsInPlace"] = True
           info["UIFileSharingEnabled"] = True
+          info.pop("UTImportedTypeDeclarations", None)
           info["CFBundleDocumentTypes"] = [{
-              "CFBundleTypeName": "ZIP archive or Unity asset bundle",
+              "CFBundleTypeName": "Unity asset bundle or ZIP archive",
               "CFBundleTypeRole": "Editor",
               "LSHandlerRank": "Alternate",
               "LSItemContentTypes": ["public.zip-archive", "com.codex.unity3d"],
           }]
-          info["UTImportedTypeDeclarations"] = [{
+          info["UTExportedTypeDeclarations"] = [{
               "UTTypeIdentifier": "com.codex.unity3d",
-              "UTTypeDescription": "Unity Asset Bundle",
-              "UTTypeConformsTo": ["public.data", "public.item"],
+              "UTTypeDescription": "Unity asset bundle",
+              "UTTypeConformsTo": ["public.data"],
               "UTTypeTagSpecification": {
                   "public.filename-extension": ["unity3d"],
-                  "public.mime-type": ["application/octet-stream"],
               },
           }]
           plist_path.write_bytes(plistlib.dumps(info))
