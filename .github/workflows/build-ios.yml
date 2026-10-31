@@ -352,5 +352,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: MLBB_Converter_ASTC_Update_unsigned
-          path: reconstructed/MLBB_iOS_Converter/MLBB_iOS_Converter.ipa
+          path: reconstructed/MLBB_iOS_Converter/MLBB_Converter_ASTC_Update.ipa
           if-no-files-found: error
