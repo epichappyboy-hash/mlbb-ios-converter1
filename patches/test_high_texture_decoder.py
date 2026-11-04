@@ -82,7 +82,7 @@ assert TextureFormat.ETC2_RGBA8Crunched in texture_converter.CONV_TABLE
 decode_etc = texture_converter.CONV_TABLE[TextureFormat.ETC_RGB4][0]
 image = decode_etc(bytes(8), 4, 4, "ETC1")
 assert image.mode == "RGBA" and image.size == (4, 4)
-assert bytes(image.data[:4]) == bytes((0, 0, 0, 255))
+assert bytes(image.data[:4]) == bytes((2, 2, 2, 255))  # reference ETC1 rounding
 
 decode_dxt1 = texture_converter.CONV_TABLE[TextureFormat.DXT1][0]
 fallback_image = decode_dxt1(bytes(7), 4, 4)
