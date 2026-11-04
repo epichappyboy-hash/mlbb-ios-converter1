@@ -12,7 +12,7 @@ struct MLBBConverterApp: App {
 struct ConverterView: View {
     @State private var inputURL: URL?
     @State private var outputURL: URL?
-    @State private var selectedTextureQuality = "balanced"
+    @State private var selectedTextureQuality = "high"
     @State private var showImporter = false
     @State private var showShareSheet = false
     @State private var isConverting = false
