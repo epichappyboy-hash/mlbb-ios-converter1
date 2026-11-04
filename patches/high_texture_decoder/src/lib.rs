@@ -152,7 +152,7 @@ mod tests {
         let data = [0u8; 8];
         let mut pixels = [0u32; 16];
         decode(ETC1, &data, 4, 4, 4, 4, &mut pixels).unwrap();
-        assert_eq!(pixels[0].to_le_bytes(), [0, 0, 0, 255]);
+        assert_eq!(pixels[0].to_le_bytes(), [2, 2, 2, 255]); // expected decoder rounding for zero ETC1 block
         assert_eq!(pixels.len(), 16);
     }
 
