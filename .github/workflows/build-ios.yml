@@ -345,6 +345,31 @@ jobs:
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Embed converter modules, dependencies, and iOS shader bundles
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          set -euo pipefail
+          app="build/Build/Products/Release-iphoneos/MLBBConverter.app"
+          test -f app/converter_bridge.py
+          test -f app/mlbb_ios_converter.py
+          test -f app/verified_shader_mappings.json
+          test -s app/ios_shaders/ShaderVariants.unity3d
+          test -s app/ios_shaders/ShaderVariantsInBattle.unity3d
+          test -s app/ios_shaders/ShaderVariants_add.unity3d
+          test -d app_packages/UnityPy
+          test -d app_packages/PIL
+          test -d app_packages/texture2ddecoder
+          mkdir -p "$app/app" "$app/app_packages"
+          ditto app "$app/app"
+          ditto app_packages "$app/app_packages"
+          test -f "$app/app/converter_bridge.py"
+          test -f "$app/app/mlbb_ios_converter.py"
+          test -f "$app/app/verified_shader_mappings.json"
+          test -s "$app/app/ios_shaders/ShaderVariants.unity3d"
+          test -f "$app/app_packages/UnityPy/__init__.py"
+          test -f "$app/app_packages/PIL/__init__.py"
+          test -f "$app/app_packages/texture2ddecoder/__init__.py"
+          echo "Verified embedded converter code, dependencies, and shader bundles in $app"
       - name: Ensure Python standard library is embedded in app bundle
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
