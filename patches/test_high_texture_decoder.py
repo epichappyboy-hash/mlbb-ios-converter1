@@ -19,6 +19,12 @@ class FakeImage:
     def frombytes(cls, mode, size, data, _raw, _decoder):
         return cls(mode, size, data)
 
+    def getchannel(self, _channel):
+        return FakeImage("L", self.size, self.data)
+
+    def convert(self, mode):
+        return FakeImage(mode, self.size, self.data)
+
 
 pil = types.ModuleType("PIL")
 pil.Image = FakeImage
@@ -32,6 +38,14 @@ class TextureFormat(IntEnum):
     RGBA32 = 4
     ETC_RGB4Crunched = 64
     ETC2_RGBA8Crunched = 65
+
+
+unitypy = types.ModuleType("UnityPy")
+unitypy.__path__ = []
+enums = types.ModuleType("UnityPy.enums")
+enums.TextureFormat = TextureFormat
+sys.modules["UnityPy"] = unitypy
+sys.modules["UnityPy.enums"] = enums
 
 
 def legacy_decoder(_data, width, height):
