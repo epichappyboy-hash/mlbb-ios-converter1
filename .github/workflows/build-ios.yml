@@ -8,10 +8,27 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
       - name: Reassemble project archive
         run: |
           cat MLBB_iOS_Converter_Project.zip.part* > MLBB_iOS_Converter_Project.zip
           unzip -q MLBB_iOS_Converter_Project.zip -d reconstructed
+      - name: Build and test native Universal High Texture decoder
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path patches/high_texture_decoder/Cargo.toml --lib
+          cargo build --manifest-path patches/high_texture_decoder/Cargo.toml --release
+          MLBB_HIGH_TEXTURE_DECODER_LIBRARY="$GITHUB_WORKSPACE/patches/high_texture_decoder/target/release/libhigh_texture_decoder.dylib" \
+            python3 patches/test_high_texture_decoder.py
+          RUSTFLAGS="-C link-arg=-Wl,-install_name,@rpath/HighTextureDecoder.framework/HighTextureDecoder" \
+            cargo build --manifest-path patches/high_texture_decoder/Cargo.toml --release --target aarch64-apple-ios
+          native_lib="patches/high_texture_decoder/target/aarch64-apple-ios/release/libhigh_texture_decoder.dylib"
+          test -s "$native_lib"
+          file "$native_lib"
+          xcrun nm -gU "$native_lib" | grep -q '_mlbb_texture_decode'
+          xcrun nm -gU "$native_lib" | grep -q '_mlbb_texture_decoder_version'
       - name: Build native ARM64 ASTC encoder framework
         run: |
           set -euo pipefail
@@ -356,6 +373,13 @@ jobs:
           python3 ../../patches/high_texture_profile.py app/converter_bridge.py app/mlbb_ios_converter.py
           python3 ../../patches/test_high_texture_profile.py app/converter_bridge.py app/mlbb_ios_converter.py ../../patches/MLBBConverterApp.swift
           python3 -m py_compile app/converter_bridge.py app/mlbb_ios_converter.py
+      - name: Add per-texture verification to Universal High Texture
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          set -euo pipefail
+          python3 ../../patches/texture_validation.py app/mlbb_ios_converter.py
+          python3 ../../patches/test_texture_validation.py app/mlbb_ios_converter.py
+          python3 -m py_compile app/mlbb_ios_converter.py app/converter_bridge.py ../../patches/high_texture_decoder.py
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
@@ -366,6 +390,8 @@ jobs:
           app="build/Build/Products/Release-iphoneos/MLBBConverter.app"
           test -f app/converter_bridge.py
           test -f app/mlbb_ios_converter.py
+          cp ../../patches/high_texture_decoder.py app/high_texture_decoder.py
+          test -f app/high_texture_decoder.py
           test -f app/verified_shader_mappings.json
           test -s app/ios_shaders/ShaderVariants.unity3d
           test -s app/ios_shaders/ShaderVariantsInBattle.unity3d
@@ -383,7 +409,33 @@ jobs:
           test -f "$app/app_packages/UnityPy/__init__.py"
           test -f "$app/app_packages/PIL/__init__.py"
           test -f "$app/app_packages/texture2ddecoder/__init__.py"
-          echo "Verified embedded converter code, dependencies, and shader bundles in $app"
+          native_framework="$app/Frameworks/HighTextureDecoder.framework"
+          mkdir -p "$native_framework"
+          cp ../../patches/high_texture_decoder/target/aarch64-apple-ios/release/libhigh_texture_decoder.dylib "$native_framework/HighTextureDecoder"
+          curl -fsSL "https://raw.githubusercontent.com/K0lb3/texture2ddecoder-rs/551fcbfbe86c05424ccc2ff942525c0ec7171d65/LICENSE-MIT" -o "$native_framework/LICENSE-MIT.txt"
+          curl -fsSL "https://raw.githubusercontent.com/K0lb3/texture2ddecoder-rs/551fcbfbe86c05424ccc2ff942525c0ec7171d65/LICENSE-APACHE" -o "$native_framework/LICENSE-APACHE.txt"
+          curl -fsSL "https://raw.githubusercontent.com/K0lb3/texture2ddecoder-rs/551fcbfbe86c05424ccc2ff942525c0ec7171d65/COPYRIGHT" -o "$native_framework/COPYRIGHT.txt"
+          cp ../../patches/HIGH_TEXTURE_DECODER_NOTICES.txt "$app/app/HIGH_TEXTURE_DECODER_NOTICES.txt"
+          cat > "$native_framework/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleExecutable</key><string>HighTextureDecoder</string>
+            <key>CFBundleIdentifier</key><string>com.codex.mlbbconverter.hightexturedecoder</string>
+            <key>CFBundleName</key><string>HighTextureDecoder</string>
+            <key>CFBundlePackageType</key><string>FMWK</string>
+            <key>CFBundleShortVersionString</key><string>1.0.0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>MinimumOSVersion</key><string>15.0</string>
+            <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
+          </dict></plist>
+          PLIST
+          test -s "$native_framework/HighTextureDecoder"
+          xcrun nm -gU "$native_framework/HighTextureDecoder" | grep -q '_mlbb_texture_decode'
+          test -s "$native_framework/LICENSE-MIT.txt"
+          test -s "$native_framework/LICENSE-APACHE.txt"
+          echo "Verified embedded native decoder, converter code, dependencies, and shader bundles in $app"
       - name: Ensure Python standard library is embedded in app bundle
         working-directory: reconstructed/MLBB_iOS_Converter
         run: |
