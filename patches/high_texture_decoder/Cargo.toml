@@ -1,0 +1,19 @@
+[package]
+name = "mlbb_high_texture_decoder"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "high_texture_decoder"
+crate-type = ["cdylib"]
+
+[dependencies]
+texture2ddecoder = { git = "https://github.com/K0lb3/texture2ddecoder-rs", rev = "551fcbfbe86c05424ccc2ff942525c0ec7171d65", features = ["alloc"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"
+strip = "symbols"
