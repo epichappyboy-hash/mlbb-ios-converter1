@@ -1,7 +1,7 @@
 name: Build MLBB Converter ASTC Update
 on:
   push:
-    branches: [main, feature/astc-texture-quality]
+    branches: [main, feature/astc-texture-quality, codex/fix-material-lighting]
   workflow_dispatch:
 jobs:
   build:
@@ -335,6 +335,13 @@ jobs:
               raise SystemExit("ASTC quality configuration was not applied")
           converter.write_text(source)
           PY
+      - name: Preserve source Android material lighting
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          set -euo pipefail
+          python3 ../../patches/fix_material_lighting.py app/mlbb_ios_converter.py
+          python3 ../../patches/test_material_lighting_fix.py app/mlbb_ios_converter.py
+          python3 -m py_compile app/mlbb_ios_converter.py
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
