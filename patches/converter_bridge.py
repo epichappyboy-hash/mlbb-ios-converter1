@@ -127,6 +127,7 @@ def _install_ios_astc_encoder(texture_converter, texture_quality: str) -> None:
 def run_conversion(input_path: str, shader_path: str, output_path: str, display_name: str, texture_quality: str = "balanced") -> str:
     logs, capture = [], io.StringIO()
     output_dir = output_zip = None
+    high_texture_dispatcher = None
     try:
         parent = Path(output_path)
         parent.mkdir(parents=True, exist_ok=True)
@@ -159,7 +160,23 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
             for texture_format, (decoder, arguments) in list(texture_converter.CONV_TABLE.items()):
                 if decoder is texture_converter.astc:
                     texture_converter.CONV_TABLE[texture_format] = (decode_astc, arguments)
-            _diagnostic(parent, "iOS ASTC decoder installed")
+            _diagnostic(parent, "iOS ASTC legacy decoder fallback installed")
+
+            # Use the Rust native decoder first for compressed Unity formats.
+            # Existing UnityPy/Perfare decoders remain the automatic fallback.
+            try:
+                from high_texture_decoder import install_high_texture_decoder
+                high_texture_dispatcher = install_high_texture_decoder(
+                    texture_converter,
+                    logger=lambda message: _diagnostic(parent, message),
+                )
+            except Exception as decoder_exc:
+                _diagnostic(
+                    parent,
+                    "WARNING: Native High Texture decoder unavailable; "
+                    f"using legacy decoder: {type(decoder_exc).__name__}: {decoder_exc}",
+                )
+
             if texture_quality not in {"high", "balanced", "small"}:
                 raise ValueError(f"Unknown texture quality: {texture_quality}")
             _install_ios_astc_encoder(texture_converter, texture_quality)
@@ -220,7 +237,18 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
         os.replace(output_zip, final_zip)
         shutil.rmtree(output_dir, ignore_errors=True)
         _diagnostic(parent, f"conversion succeeded: {final_zip.name}")
-        return json.dumps({"ok": True, "output": str(final_zip), "convertedBundles": converter.stats.bundles, "logs": logs[-120:]})
+        decoder_summary = (
+            high_texture_dispatcher.stats.snapshot()
+            if high_texture_dispatcher is not None
+            else {"backend": "UnityPy legacy decoder fallback"}
+        )
+        return json.dumps({
+            "ok": True,
+            "output": str(final_zip),
+            "convertedBundles": converter.stats.bundles,
+            "textureDecoder": decoder_summary,
+            "logs": logs[-120:],
+        })
     except Exception as exc:
         if output_dir:
             shutil.rmtree(output_dir, ignore_errors=True)
@@ -232,4 +260,14 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
         logs.append(traceback.format_exc(limit=12))
         _diagnostic(output_path, f"conversion error: {type(exc).__name__}: {exc}")
         _diagnostic(output_path, traceback.format_exc(limit=12))
-        return json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}", "logs": logs[-120:]})
+        decoder_summary = (
+            high_texture_dispatcher.stats.snapshot()
+            if high_texture_dispatcher is not None
+            else {"backend": "UnityPy legacy decoder fallback"}
+        )
+        return json.dumps({
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "textureDecoder": decoder_summary,
+            "logs": logs[-120:],
+        })
