@@ -349,6 +349,13 @@ jobs:
           python3 ../../patches/optional_fmod_audio.py app_packages/UnityPy/export/AudioClipConverter.py
           python3 ../../patches/test_optional_fmod_audio.py app_packages/UnityPy/export/AudioClipConverter.py
           python3 -m py_compile app_packages/UnityPy/export/AudioClipConverter.py
+      - name: Apply High Texture main profile
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          set -euo pipefail
+          python3 ../../patches/high_texture_profile.py app/converter_bridge.py app/mlbb_ios_converter.py
+          python3 ../../patches/test_high_texture_profile.py app/converter_bridge.py app/mlbb_ios_converter.py ../../patches/MLBBConverterApp.swift
+          python3 -m py_compile app/converter_bridge.py app/mlbb_ios_converter.py
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
