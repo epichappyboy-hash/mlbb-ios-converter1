@@ -136,6 +136,15 @@ class HighTextureDispatcher:
                     image = self.native.decode(
                         _format_id, data, width, height, _block_width, _block_height
                     )
+                    legacy_mode = (
+                        _legacy_args[0]
+                        if _legacy_args and _legacy_args[0] in ("L", "RGB", "RGBA")
+                        else "RGBA"
+                    )
+                    if legacy_mode == "L":
+                        image = image.getchannel("R")
+                    elif legacy_mode == "RGB":
+                        image = image.convert("RGB")
                     self.stats.native_success += 1
                     return image
                 except Exception as native_error:
