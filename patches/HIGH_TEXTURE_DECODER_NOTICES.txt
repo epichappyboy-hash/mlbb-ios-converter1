@@ -1,0 +1,18 @@
+High Texture Decoder third-party notices
+
+This framework wraps texture2ddecoder 0.1.2 from:
+https://github.com/K0lb3/texture2ddecoder-rs
+Pinned revision: 551fcbfbe86c05424ccc2ff942525c0ec7171d65
+License: MIT OR Apache-2.0
+
+The decoder crate credits upstream codec implementations as follows:
+- ATC: MIT, Perfare/AssetStudio Texture2DDecoderNative
+- ASTC: MIT, Ishotihadus/mikunyan native decoder
+- BCn: MIT, Perfare/AssetStudio Texture2DDecoderNative
+- ETC/EAC: MIT, Ishotihadus/mikunyan native decoder
+- PVRTC: MIT, Ishotihadus/mikunyan native decoder
+- Crunch: Public Domain, Binomial LLC
+- Unity Crunch: zlib, Unity Technologies
+
+The crate's own LICENSE-MIT, LICENSE-APACHE, and COPYRIGHT files are included
+inside the native framework in the generated iOS app.
