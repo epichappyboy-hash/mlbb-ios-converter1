@@ -1052,6 +1052,7 @@ private struct IshaScriptSkinCatalogView: View {
     @State private var heroes: [IshaCatalogHero] = []
     @State private var tagLibraryCache: [IshaCatalogTag] = []
     @State private var tagByIDCache: [String: IshaCatalogTag] = [:]
+    @State private var tagByCanonicalIDCache: [String: IshaCatalogTag] = [:]
     @State private var assignmentsCache: [String: [String]] = [:]
     @State private var availableTagsCache: [String] = ["All"]
     @State private var visibleGroupsCache: [IshaCatalogHeroGroup] = []
@@ -1111,41 +1112,65 @@ private struct IshaScriptSkinCatalogView: View {
     }
 
     private func assignedTagNames(for skin: IshaCatalogSkin) -> [String] {
-        (assignmentsCache[skin.stableID] ?? []).compactMap { tagByIDCache[$0]?.name }
+        (assignmentsCache[skin.stableID] ?? []).compactMap { tagByIDCache[$0]?.canonicalName }
     }
 
     @MainActor
     private func rebuildCatalogCaches(for catalog: [IshaCatalogHero]) {
         let heroNames = Set(catalog.map { $0.name.lowercased() })
-        let genericNames: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup"]
+        let genericNames: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup", "default", "uncategorized", "featured"]
         var unique: [String: IshaCatalogTag] = [:]
+        var sourceRecords: [IshaCatalogTag] = []
 
         for hero in catalog {
             for skin in hero.skins {
                 for tag in skin.tags ?? [] {
-                    let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let name = tag.canonicalName.trimmingCharacters(in: .whitespacesAndNewlines)
                     let key = name.lowercased()
+                    let canonicalID = tag.canonicalID
                     let skinNameKey = (skin.skin_name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                     guard !name.isEmpty,
                           !heroNames.contains(key),
                           !genericNames.contains(key),
+                          !genericNames.contains(canonicalID),
                           key != skinNameKey else { continue }
-                    if let existing = unique[tag.stableID] {
-                        if (existing.icon ?? "").isEmpty && !(tag.icon ?? "").isEmpty {
-                            unique[tag.stableID] = tag
+
+                    sourceRecords.append(tag)
+                    if let existing = unique[canonicalID] {
+                        let hasIcon = !(existing.icon ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        let currentHasIcon = !(tag.icon ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        let existingHasCanonicalName = existing.name.caseInsensitiveCompare(existing.canonicalName) == .orderedSame
+                        let currentHasCanonicalName = tag.name.caseInsensitiveCompare(tag.canonicalName) == .orderedSame
+                        if (currentHasCanonicalName && !existingHasCanonicalName) || (!hasIcon && currentHasIcon) {
+                            unique[canonicalID] = tag
                         }
                     } else {
-                        unique[tag.stableID] = tag
+                        unique[canonicalID] = tag
                     }
                 }
             }
         }
 
         let library = unique.values.sorted {
-            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            $0.canonicalName.localizedCaseInsensitiveCompare($1.canonicalName) == .orderedAscending
         }
         tagLibraryCache = library
-        tagByIDCache = Dictionary(uniqueKeysWithValues: library.map { ($0.stableID, $0) })
+
+        let canonicalLookup = Dictionary(uniqueKeysWithValues: library.map { ($0.canonicalID, $0) })
+        tagByCanonicalIDCache = canonicalLookup
+
+        // Map old name-derived assignment IDs as well as new canonical IDs.
+        var legacyLookup: [String: IshaCatalogTag] = [:]
+        for sourceTag in sourceRecords {
+            if let canonical = canonicalLookup[sourceTag.canonicalID] {
+                legacyLookup[sourceTag.stableID] = canonical
+            }
+        }
+        for tag in library {
+            legacyLookup[tag.stableID] = tag
+            legacyLookup[tag.canonicalID] = tag
+        }
+        tagByIDCache = legacyLookup
 
         if let data = skinTagAssignmentsJSON.data(using: .utf8),
            let saved = try? JSONDecoder().decode([String: [String]].self, from: data) {
@@ -1167,11 +1192,11 @@ private struct IshaScriptSkinCatalogView: View {
                     values.insert(value)
                 }
                 for id in assignmentsCache[skin.stableID] ?? [] {
-                    if let name = tagByIDCache[id]?.name { values.insert(name) }
+                    if let name = tagByIDCache[id]?.canonicalName { values.insert(name) }
                 }
             }
         }
-        for tag in tagLibraryCache { values.insert(tag.name) }
+        for tag in tagLibraryCache { values.insert(tag.canonicalName) }
         availableTagsCache = ["All"] + values.sorted {
             $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
         }
@@ -1234,44 +1259,45 @@ private struct IshaScriptSkinCatalogView: View {
         let heroKey = heroName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let categoryKey = (category ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let skinNameKey = (skin.skin_name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let genericNames: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup", "uncategorized", "featured"]
+        let genericNames: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup", "default", "uncategorized", "featured"]
         var result: [IshaCatalogTag] = []
 
         func appendRealTag(_ rawTag: IshaCatalogTag) {
-            let cleanedName = rawTag.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Some source rows put the skin title in name, but the id is the real series (e.g. Heart Afloat -> Valentine).
+            let canonical = tagByCanonicalIDCache[rawTag.canonicalID] ?? tagByIDCache[rawTag.stableID] ?? rawTag
+            let cleanedName = canonical.canonicalName.trimmingCharacters(in: .whitespacesAndNewlines)
             let key = cleanedName.lowercased()
+            let identity = canonical.canonicalID
             guard !key.isEmpty,
                   key != heroKey,
                   key != categoryKey,
                   key != skinNameKey,
                   !genericNames.contains(key),
-                  !result.contains(where: { $0.stableID == rawTag.stableID }) else { return }
+                  !genericNames.contains(identity),
+                  !result.contains(where: { $0.canonicalID == identity }) else { return }
 
-            // Several skin records contain a real tag name but omit its image URL.
-            // Resolve it from another record with the same canonical tag name.
-            let canonical = tagByIDCache[rawTag.stableID]
-            let resolvedIcon = (rawTag.icon?.isEmpty == false) ? rawTag.icon : canonical?.icon
-            let resolvedFile = (rawTag.file?.isEmpty == false) ? rawTag.file : canonical?.file
+            let rawIcon = rawTag.icon?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let canonicalIcon = canonical.icon?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawFile = rawTag.file?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let canonicalFile = canonical.file?.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolved = IshaCatalogTag(
-                tagID: rawTag.tagID ?? canonical?.tagID,
-                name: rawTag.name,
-                icon: resolvedIcon,
-                file: resolvedFile,
-                description: rawTag.description ?? canonical?.description
+                tagID: canonical.tagID ?? rawTag.tagID,
+                name: canonical.canonicalName,
+                icon: (rawIcon?.isEmpty == false) ? rawIcon : canonicalIcon,
+                file: (rawFile?.isEmpty == false) ? rawFile : canonicalFile,
+                description: rawTag.description ?? canonical.description
             )
             result.append(resolved)
         }
 
-        for rawTag in skin.tags ?? [] {
-            appendRealTag(rawTag)
+        for tag in skin.tags ?? [] {
+            appendRealTag(tag)
         }
-
         for tagID in assignmentsCache[skin.stableID] ?? [] {
             if let tag = tagByIDCache[tagID] {
                 appendRealTag(tag)
             }
         }
-
         return result
     }
 
@@ -1373,7 +1399,9 @@ private struct IshaScriptSkinCatalogView: View {
                     skinName: target.skin.skin_name ?? "Custom Skin",
                     heroName: target.heroName,
                     tags: tagLibrary,
-                    initialSelection: selectedTagIDs(for: target.skin),
+                    initialSelection: selectedTagIDs(for: target.skin).union(
+                        Set(visibleSkinTags(for: target.skin, heroName: target.heroName, category: target.category).map { $0.stableID })
+                    ),
                     onCancel: { activeCatalogSheet = nil },
                     onSave: { ids in
                         saveTagAssignments(ids, for: target.skin)
@@ -1755,27 +1783,12 @@ private struct IshaScriptSkinCatalogView: View {
     }
 
     private func skinRow(_ skin: IshaCatalogSkin, heroName: String, category: String?) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
+        let skinTags = visibleSkinTags(for: skin, heroName: heroName, category: category)
+        return VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 11) {
                 IshaCatalogRemoteImage(urlString: skin.image)
                     .frame(width: 64, height: 72)
                     .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                    .overlay(alignment: .topTrailing) {
-                        IshaSkinTagBadgeStack(
-                            tags: visibleSkinTags(for: skin, heroName: heroName, category: category),
-                            onTap: { tag in
-                                activeCatalogSheet = .tagInfo(
-                                    IshaCatalogTagInfoTarget(
-                                        tag: tag,
-                                        heroName: heroName,
-                                        skinName: skin.skin_name ?? "Custom Skin",
-                                        skinImage: skin.image
-                                    )
-                                )
-                            }
-                        )
-                        .padding(3)
-                    }
                     .overlay(RoundedRectangle(cornerRadius: 11).stroke(.white.opacity(0.10), lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 5) {
@@ -1792,25 +1805,36 @@ private struct IshaScriptSkinCatalogView: View {
                         }
                     }
 
+                    if !skinTags.isEmpty {
+                        HStack {
+                            Spacer(minLength: 0)
+                            IshaSkinTagBadgeStack(tags: skinTags) { tag in
+                                activeCatalogSheet = .tagInfo(
+                                    IshaCatalogTagInfoTarget(
+                                        tag: tag,
+                                        heroName: heroName,
+                                        skinName: skin.skin_name ?? "Custom Skin",
+                                        skinImage: skin.image
+                                    )
+                                )
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+
                     Text(heroName)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(ConverterPalette.muted)
 
                     Button {
                         activeCatalogSheet = .tagEditor(
-                            IshaCatalogTagEditTarget(
-                                skin: skin,
-                                heroName: heroName,
-                                category: category
-                            )
+                            IshaCatalogTagEditTarget(skin: skin, heroName: heroName, category: category)
                         )
                     } label: {
                         HStack(spacing: 5) {
-                            Image(systemName: "tag.fill")
-                                .font(.system(size: 9, weight: .bold))
-                            Text("EDIT SKIN TAGS")
-                                .font(.system(size: 8, weight: .heavy, design: .rounded))
-                            Text("\(selectedTagIDs(for: skin).count)")
+                            Image(systemName: "tag.fill").font(.system(size: 9, weight: .bold))
+                            Text("EDIT SKIN TAGS").font(.system(size: 8, weight: .heavy, design: .rounded))
+                            Text("\(skinTags.count)")
                                 .font(.system(size: 8, weight: .bold, design: .rounded))
                                 .foregroundColor(ConverterPalette.green)
                         }
@@ -2087,15 +2111,19 @@ private struct IshaCatalogSkin: Decodable, Identifiable {
         appendUnique(heroName)
         appendUnique(category?.capitalized ?? "Uncategorized")
 
-        let sourceTags = (tags ?? []).map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
-        for tag in sourceTags where !tag.isEmpty {
-            if tag.caseInsensitiveCompare(heroName) != .orderedSame &&
-               tag.caseInsensitiveCompare(category ?? "") != .orderedSame {
-                appendUnique(tag.capitalized)
+        let genericTags: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup", "default", "uncategorized", "featured"]
+        let sourceTags = (tags ?? []).map { $0.canonicalName.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter {
+                let key = $0.lowercased()
+                return !key.isEmpty &&
+                    key != heroName.lowercased() &&
+                    key != (category ?? "").lowercased() &&
+                    !genericTags.contains(key)
             }
+        for tag in sourceTags {
+            appendUnique(tag)
         }
-
-        if sourceTags.filter({ !$0.isEmpty }).isEmpty {
+        if sourceTags.isEmpty {
             appendUnique("Uncategorized")
         }
         if featured == true {
@@ -2117,32 +2145,46 @@ private struct IshaCatalogTag: Decodable, Identifiable {
         case name, icon, file, description
     }
 
+    var canonicalID: String {
+        let rawID = (tagID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let slug = rawID.replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return slug.isEmpty ? stableID : slug
+    }
+
+    var canonicalName: String {
+        switch canonicalID {
+        case "valentine": return "Valentine"
+        case "elite": return "Elite"
+        case "starlight": return "Starlight"
+        default: return name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
     var displayName: String {
-        stableID.contains("anniversary") ? "10TH ANNIVERSARY" : name.uppercased()
+        canonicalID.contains("anniversary") ? "10TH ANNIVERSARY" : canonicalName.uppercased()
     }
 
     var infoTitle: String {
-        let normalized = (name + " " + (file ?? "")).lowercased()
-        if stableID.contains("anniversary") || normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
+        let normalized = (canonicalName + " " + (file ?? "")).lowercased()
+        if canonicalID.contains("anniversary") || normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
             return "10th Anniversary Skin"
         }
-        if let supplied = description?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !supplied.isEmpty {
-            return name
+        if let supplied = description?.trimmingCharacters(in: .whitespacesAndNewlines), !supplied.isEmpty {
+            return canonicalName
         }
-        return name.localizedCaseInsensitiveContains("skin") ? name : "\(name) Skin"
+        return canonicalName.localizedCaseInsensitiveContains("skin") ? canonicalName : "\(canonicalName) Skin"
     }
 
     var infoDescription: String {
-        if let supplied = description?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !supplied.isEmpty {
+        if let supplied = description?.trimmingCharacters(in: .whitespacesAndNewlines), !supplied.isEmpty {
             return supplied
         }
-        let normalized = (name + " " + (file ?? "")).lowercased()
-        if stableID.contains("anniversary") || normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
+        let normalized = (canonicalName + " " + (file ?? "")).lowercased()
+        if canonicalID.contains("anniversary") || normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
             return "10th Anniversary-themed exclusive Epic skin."
         }
-        switch stableID {
+        switch canonicalID {
         case "epic":
             return "This badge identifies the skin as an Epic-tier skin."
         case "collector":
@@ -2151,8 +2193,12 @@ private struct IshaCatalogTag: Decodable, Identifiable {
             return "This badge identifies the skin as part of the Starlight series."
         case "annual-starlight":
             return "This badge identifies the skin as part of the Annual Starlight series."
+        case "valentine":
+            return "This badge identifies the skin as part of the Valentine series."
+        case "elite":
+            return "This badge identifies the skin as an Elite-tier skin."
         default:
-            return "This badge identifies the skin's \(name) category in the catalog."
+            return "This badge identifies the skin's \(canonicalName) category in the catalog."
         }
     }
 
@@ -2163,7 +2209,7 @@ private struct IshaCatalogTag: Decodable, Identifiable {
         return slug.isEmpty ? (tagID ?? "tag") : slug
     }
 
-    var id: String { stableID }
+    var id: String { canonicalID }
 }
 
 private struct IshaCatalogTagEditTarget: Identifiable {
@@ -2292,7 +2338,7 @@ private struct IshaSkinTagInfoSheet: View {
     let skinImage: String?
 
     private var anniversarySkin: Bool {
-        tag.stableID.contains("anniversary")
+        tag.canonicalID.contains("anniversary")
             || skinName.localizedCaseInsensitiveContains("anniversary")
             || skinName.localizedCaseInsensitiveContains("10th")
     }
@@ -2348,7 +2394,7 @@ private struct IshaSkinTagInfoSheet: View {
                                     .foregroundColor(.white)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
-                            Text(tag.name.uppercased())
+                            Text(tag.canonicalName.uppercased())
                                 .font(.system(size: 9, weight: .heavy, design: .rounded))
                                 .foregroundColor(ConverterPalette.blue)
                             Text(heroName + " · " + skinName)
@@ -2412,7 +2458,7 @@ private struct IshaSkinTagPickerView: View {
     private var filteredTags: [IshaCatalogTag] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return tags }
-        return tags.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        return tags.filter { $0.canonicalName.localizedCaseInsensitiveContains(query) }
     }
 
     var body: some View {
@@ -2555,7 +2601,7 @@ private struct IshaSkinTagPickerView: View {
                         .stroke(isSelected ? ConverterPalette.green : ConverterPalette.muted.opacity(0.18), lineWidth: isSelected ? 1.7 : 1)
                 )
 
-                Text(tag.name)
+                Text(tag.canonicalName)
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(isSelected ? ConverterPalette.green : ConverterPalette.text)
                     .lineLimit(2)
