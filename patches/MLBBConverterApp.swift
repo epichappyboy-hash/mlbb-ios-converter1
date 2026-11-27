@@ -1056,6 +1056,8 @@ private struct IshaScriptSkinCatalogView: View {
     @State private var selectedTag = "All"
     @State private var featuredOnly = false
     @State private var downloadingIDs: Set<String> = []
+    @State private var convertingIDs: Set<String> = []
+    @State private var isProcessingDownload = false
     @State private var shareURL: URL?
     @State private var showShareSheet = false
     @State private var errorMessage: String?
@@ -1643,6 +1645,12 @@ private struct IshaScriptSkinCatalogView: View {
                 IshaCatalogRemoteImage(urlString: skin.image)
                     .frame(width: 64, height: 72)
                     .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .overlay(alignment: .topTrailing) {
+                        IshaSkinTagBadgeStack(
+                            tags: visibleSkinTags(for: skin, heroName: heroName, category: category)
+                        )
+                        .padding(3)
+                    }
                     .overlay(RoundedRectangle(cornerRadius: 11).stroke(.white.opacity(0.10), lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 5) {
@@ -1683,7 +1691,14 @@ private struct IshaScriptSkinCatalogView: View {
                     }
                     .buttonStyle(.plain)
 
-                    if downloadingIDs.contains(skin.stableID) {
+                    if convertingIDs.contains(skin.stableID) {
+                        HStack(spacing: 6) {
+                            ProgressView().tint(ConverterPalette.green).scaleEffect(0.8)
+                            Text("Converting to iOS…")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(ConverterPalette.green)
+                        }
+                    } else if downloadingIDs.contains(skin.stableID) {
                         HStack(spacing: 6) {
                             ProgressView().tint(ConverterPalette.blue).scaleEffect(0.8)
                             Text("Downloading archive…")
@@ -1707,9 +1722,9 @@ private struct IshaScriptSkinCatalogView: View {
                     Task { await download(skin, heroName: heroName) }
                 } label: {
                     VStack(spacing: 4) {
-                        Image(systemName: downloadingIDs.contains(skin.stableID) ? "arrow.down" : "arrow.down.to.line")
+                        Image(systemName: convertingIDs.contains(skin.stableID) ? "arrow.triangle.2.circlepath" : (downloadingIDs.contains(skin.stableID) ? "arrow.down" : "arrow.down.to.line"))
                             .font(.system(size: 13, weight: .bold))
-                        Text(downloadingIDs.contains(skin.stableID) ? "WAIT" : "SAVE")
+                        Text(isProcessingDownload ? "WAIT" : "SAVE")
                             .font(.system(size: 8, weight: .heavy, design: .rounded))
                     }
                     .foregroundColor(.white)
@@ -1718,30 +1733,7 @@ private struct IshaScriptSkinCatalogView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .disabled(downloadingIDs.contains(skin.stableID))
-            }
-
-            let tags = visibleSkinTags(for: skin, heroName: heroName, category: category)
-            if !tags.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .center, spacing: 8) {
-                        ForEach(tags) { tag in
-                            VStack(spacing: 4) {
-                                IshaCatalogTagArtwork(iconURL: tag.icon)
-                                    .frame(width: 54, height: 28)
-                                Text(tag.name)
-                                    .font(.system(size: 8, weight: .semibold))
-                                    .foregroundColor(ConverterPalette.muted)
-                                    .lineLimit(1)
-                                    .frame(width: 68)
-                            }
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 6)
-                            .background(ConverterPalette.panel)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        }
-                    }
-                }
+                .disabled(isProcessingDownload)
             }
         }
         .padding(10)
@@ -1754,11 +1746,11 @@ private struct IshaScriptSkinCatalogView: View {
             HStack {
                 Text("ISHA SCRIPT SKIN LIBRARY")
                 Spacer()
-                Text("DOWNLOAD ONLY")
+                Text("DOWNLOAD + AUTO CONVERT")
             }
             .font(.system(size: 8, weight: .bold, design: .monospaced))
             .foregroundColor(ConverterPalette.muted)
-            Text("Downloads are saved inside the app. They do not start the converter automatically.")
+            Text("Tap SAVE to download a skin and automatically convert it into an iOS-ready ZIP.")
                 .font(.system(size: 9))
                 .foregroundColor(ConverterPalette.muted.opacity(0.8))
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1792,17 +1784,22 @@ private struct IshaScriptSkinCatalogView: View {
 
     @MainActor
     private func download(_ skin: IshaCatalogSkin, heroName: String) async {
-        guard !downloadingIDs.contains(skin.stableID),
+        guard !isProcessingDownload,
               let address = skin.script,
               let url = URL(string: address),
               url.scheme?.lowercased() == "https",
               let fileExtension = validArchiveKind(address) else {
-            errorMessage = "Invalid or unsupported archive link."
+            errorMessage = "Invalid or unsupported archive link, or another skin is already being processed."
             return
         }
 
+        isProcessingDownload = true
         downloadingIDs.insert(skin.stableID)
-        defer { downloadingIDs.remove(skin.stableID) }
+        defer {
+            downloadingIDs.remove(skin.stableID)
+            convertingIDs.remove(skin.stableID)
+            isProcessingDownload = false
+        }
 
         do {
             let (temporaryURL, response) = try await URLSession.shared.download(from: url)
@@ -1827,18 +1824,39 @@ private struct IshaScriptSkinCatalogView: View {
             }
             try FileManager.default.moveItem(at: temporaryURL, to: destination)
 
-            var history = recentDownloads
-            history.removeAll { $0 == destination.lastPathComponent }
-            history.insert(destination.lastPathComponent, at: 0)
-            history = Array(history.prefix(30))
-            if let historyData = try? JSONEncoder().encode(history),
-               let historyText = String(data: historyData, encoding: .utf8) {
-                historyJSON = historyText
+            downloadingIDs.remove(skin.stableID)
+            convertingIDs.insert(skin.stableID)
+
+            let outputDirectory = documents
+                .appendingPathComponent("Isha Converter iOS", isDirectory: true)
+                .appendingPathComponent("Auto Converted Skins", isDirectory: true)
+            try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+            // Reuse the exact converter engine used by the main Convert screen.
+            // Keep the original downloaded archive as a recovery copy.
+            let conversionResult: Result<URL, Error> = await withCheckedContinuation { continuation in
+                PythonConverter.shared.convert(input: destination, outputDirectory: outputDirectory) { result in
+                    continuation.resume(returning: result)
+                }
             }
 
-            shareURL = destination
-            showShareSheet = true
-            statusMessage = "Na-save ang \(destination.lastPathComponent) sa Script Skin Downloads."
+            switch conversionResult {
+            case .success(let convertedURL):
+                var history = recentDownloads
+                history.removeAll { $0 == convertedURL.lastPathComponent }
+                history.insert(convertedURL.lastPathComponent, at: 0)
+                history = Array(history.prefix(30))
+                if let historyData = try? JSONEncoder().encode(history),
+                   let historyText = String(data: historyData, encoding: .utf8) {
+                    historyJSON = historyText
+                }
+
+                shareURL = convertedURL
+                showShareSheet = true
+                statusMessage = "Tapos na: na-download at awtomatikong na-convert ang \(skin.skin_name ?? "skin") para sa iOS. Ang converted ZIP ang nakahandang i-save o i-share."
+            case .failure(let conversionError):
+                errorMessage = "Na-download ang \(skin.skin_name ?? "skin"), pero nabigo ang automatic iOS conversion. Nananatili ang original archive sa Script Skin Downloads. Error: \(conversionError.localizedDescription)"
+            }
         } catch {
             errorMessage = "Hindi na-download ang \(skin.skin_name ?? "skin"). \(error.localizedDescription)"
         }
@@ -2004,6 +2022,49 @@ private struct IshaCatalogRemoteImage: View {
     }
 }
 
+
+private struct IshaSkinTagBadgeStack: View {
+    let tags: [IshaCatalogTag]
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            ForEach(Array(tags.prefix(3))) { tag in
+                HStack(spacing: 3) {
+                    if let iconURL = tag.icon, !iconURL.isEmpty {
+                        IshaCatalogTagArtwork(iconURL: iconURL)
+                            .frame(width: 19, height: 19)
+                    } else {
+                        Image(systemName: "tag.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(ConverterPalette.green)
+                            .frame(width: 19, height: 19)
+                    }
+                    Text(tag.name)
+                        .font(.system(size: 7, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .frame(maxWidth: 34, alignment: .leading)
+                }
+                .padding(.horizontal, 3)
+                .padding(.vertical, 2)
+                .background(Color.black.opacity(0.82))
+                .clipShape(Capsule())
+            }
+
+            if tags.count > 3 {
+                Text("+\(tags.count - 3)")
+                    .font(.system(size: 7, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.82))
+                    .clipShape(Capsule())
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .allowsHitTesting(false)
+    }
+}
 
 private struct IshaSkinTagPickerView: View {
     let skinName: String
