@@ -1983,6 +1983,35 @@ private struct IshaScriptSkinCatalogView: View {
     }
 }
 
+private struct IshaSkinUpgradeCatalogResponse: Decodable {
+    let skin_upgrades: [IshaSkinUpgradeEntry]
+}
+
+private struct IshaSkinUpgradeEntry: Decodable, Identifiable {
+    let id: String
+    let hero: String
+    let base_name: String
+    let base_image: String?
+    let enabled: Bool?
+    let skin_tags: [String]?
+    let targets: [IshaSkinUpgradeTarget]?
+}
+
+private struct IshaSkinUpgradeTarget: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let image: String?
+    let script: String?
+    let type: String?
+    let enabled: Bool?
+    let skin_tags: [String]?
+}
+
+private struct IshaSkinUpgradeSelection {
+    let entry: IshaSkinUpgradeEntry
+    let target: IshaSkinUpgradeTarget
+}
+
 private struct IshaCatalogResponse: Decodable {
     let heroes: [IshaCatalogHero]
 }
@@ -2534,5 +2563,660 @@ private struct IshaCatalogTagArtwork: View {
                         : ConverterPalette.blue.opacity(0.85)
                 )
         }
+    }
+}
+
+
+private struct IshaMultiReplaceLibraryView: View {
+    @Environment(\.presentationMode) private var presentationMode
+
+    @State private var entries: [IshaSkinUpgradeEntry] = []
+    @State private var isLoading = false
+    @State private var searchText = ""
+    @State private var appliedSearchText = ""
+    @State private var searchTask: Task<Void, Never>?
+    @State private var selectedReplacements: [String: String] = [:]
+    @State private var isApplying = false
+    @State private var processingMessage: String?
+    @State private var errorMessage: String?
+    @State private var statusMessage: String?
+    @State private var shareURL: URL?
+    @State private var showShareSheet = false
+
+    private let catalogURL = URL(string: "https://raw.githubusercontent.com/missnapokita/masterkiter/main/skin_upgrades.json")!
+    private let columns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8)
+    ]
+
+    private var availableTargetCount: Int {
+        entries.reduce(0) { total, entry in
+            total + (entry.targets ?? []).filter { validTarget($0) }.count
+        }
+    }
+
+    private var enabledEntryCount: Int {
+        entries.filter { $0.enabled != false && !(($0.targets ?? []).filter { validTarget($0) }).isEmpty }.count
+    }
+
+    private var selectedJobs: [IshaSkinUpgradeSelection] {
+        entries.compactMap { entry in
+            guard let targetID = selectedReplacements[entry.id],
+                  let target = (entry.targets ?? []).first(where: { $0.id == targetID && validTarget($0) }) else {
+                return nil
+            }
+            return IshaSkinUpgradeSelection(entry: entry, target: target)
+        }
+    }
+
+    private var visibleEntries: [IshaSkinUpgradeEntry] {
+        let query = appliedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return entries.filter { entry in
+            guard entry.enabled != false else { return false }
+            let validTargets = (entry.targets ?? []).filter { validTarget($0) }
+            guard !validTargets.isEmpty else { return false }
+            guard !query.isEmpty else { return true }
+
+            let searchable = [
+                entry.hero,
+                entry.base_name,
+                (entry.skin_tags ?? []).joined(separator: " "),
+                validTargets.map { $0.name + " " + ($0.type ?? "") + " " + ($0.skin_tags ?? []).joined(separator: " ") }.joined(separator: " ")
+            ].joined(separator: " ")
+            return searchable.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                ConverterPalette.background.ignoresSafeArea()
+
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        topBar
+                        heroPanel
+                        searchField
+
+                        if !selectedReplacements.isEmpty {
+                            selectionPanel
+                        }
+
+                        HStack {
+                            Text("ALL AVAILABLE BASE SKINS")
+                                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                                .foregroundColor(ConverterPalette.muted)
+                            Spacer()
+                            Text("\(visibleEntries.count) SKINS")
+                                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                                .foregroundColor(ConverterPalette.green)
+                        }
+
+                        if isLoading && entries.isEmpty {
+                            loadingState
+                        } else if let errorMessage, entries.isEmpty {
+                            errorState(errorMessage)
+                        } else if visibleEntries.isEmpty {
+                            emptyState
+                        } else {
+                            LazyVStack(alignment: .leading, spacing: 10) {
+                                ForEach(visibleEntries) { entry in
+                                    upgradeCard(entry)
+                                }
+                            }
+                        }
+
+                        footer
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 34)
+                    .frame(maxWidth: 760)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .navigationBarHidden(true)
+            .preferredColorScheme(.dark)
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
+        .task {
+            if entries.isEmpty { await loadCatalog() }
+        }
+        .onChange(of: searchText) { value in
+            searchTask?.cancel()
+            searchTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 220_000_000)
+                guard !Task.isCancelled else { return }
+                appliedSearchText = value
+            }
+        }
+        .onDisappear {
+            searchTask?.cancel()
+        }
+        .sheet(isPresented: $showShareSheet) {
+            if let shareURL {
+                ActivityView(activityItems: [shareURL])
+            }
+        }
+        .alert("Multi Replace failed", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "Unknown error")
+        }
+        .alert("Multi Replace", isPresented: Binding(
+            get: { statusMessage != nil },
+            set: { if !$0 { statusMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { statusMessage = nil }
+        } message: {
+            Text(statusMessage ?? "")
+        }
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                presentationMode.wrappedValue.dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(ConverterPalette.text)
+                    .frame(width: 40, height: 40)
+                    .background(ConverterPalette.panel)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ISHA CONVERTER")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .foregroundColor(ConverterPalette.text)
+                Text("MULTI-SKIN REPLACE")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundColor(ConverterPalette.green)
+            }
+
+            Spacer()
+
+            Button {
+                Task { await loadCatalog() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(ConverterPalette.blue)
+                    .frame(width: 40, height: 40)
+                    .background(ConverterPalette.panel)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isLoading || isApplying)
+        }
+    }
+
+    private var heroPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("REPLACE MULTIPLE SKINS")
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .foregroundColor(ConverterPalette.green)
+                Spacer()
+                Image(systemName: "square.stack.3d.up.fill")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundColor(.white.opacity(0.78))
+            }
+
+            Text("Not limited to Default")
+                .font(.system(size: 23, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+
+            Text("Choose a base skin, pick its replacement, then select more skins from other heroes. Convert the whole selection into one iOS-ready ZIP.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.white.opacity(0.75))
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 0) {
+                metric(value: "\(enabledEntryCount)", label: "BASE SKINS")
+                Rectangle().fill(.white.opacity(0.18)).frame(width: 1, height: 28)
+                metric(value: "\(availableTargetCount)", label: "REPLACEMENTS")
+                Rectangle().fill(.white.opacity(0.18)).frame(width: 1, height: 28)
+                metric(value: "\(selectedReplacements.count)", label: "SELECTED")
+            }
+            .padding(.top, 2)
+        }
+        .padding(17)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.12, green: 0.24, blue: 0.38),
+                    Color(red: 0.10, green: 0.18, blue: 0.28),
+                    ConverterPalette.panel
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(ConverterPalette.green.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    private func metric(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+            Text(label)
+                .font(.system(size: 7, weight: .heavy, design: .rounded))
+                .foregroundColor(.white.opacity(0.62))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(ConverterPalette.blue)
+            TextField("Search hero, base skin or replacement…", text: $searchText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(ConverterPalette.text)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    appliedSearchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(ConverterPalette.muted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 13)
+        .frame(height: 46)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(ConverterPalette.blue.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    private var selectionPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(selectedReplacements.count) REPLACEMENT(S) SELECTED")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundColor(ConverterPalette.green)
+                    Text("One target per base skin · multiple heroes supported")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(ConverterPalette.muted)
+                }
+                Spacer()
+                Button("CLEAR") {
+                    selectedReplacements.removeAll()
+                }
+                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                .foregroundColor(ConverterPalette.blue)
+                .disabled(isApplying)
+            }
+
+            Button {
+                Task { await downloadAndConvert() }
+            } label: {
+                HStack(spacing: 8) {
+                    if isApplying {
+                        ProgressView().tint(.white).scaleEffect(0.85)
+                    } else {
+                        Image(systemName: "arrow.down.to.line.compact")
+                    }
+                    Text(isApplying ? "PROCESSING SELECTED SKINS…" : "DOWNLOAD + CONVERT SELECTED")
+                    Spacer()
+                    Text("\(selectedReplacements.count)")
+                        .opacity(0.75)
+                }
+                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                .foregroundColor(.white)
+                .padding(.horizontal, 13)
+                .frame(height: 45)
+                .background(ConverterPalette.green.opacity(0.88))
+                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(isApplying || selectedReplacements.isEmpty)
+
+            if let processingMessage {
+                HStack(spacing: 7) {
+                    ProgressView().tint(ConverterPalette.blue).scaleEffect(0.8)
+                    Text(processingMessage)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(ConverterPalette.blue)
+                }
+            }
+        }
+        .padding(12)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(ConverterPalette.green.opacity(0.28), lineWidth: 1)
+        )
+    }
+
+    private func upgradeCard(_ entry: IshaSkinUpgradeEntry) -> some View {
+        let targets = (entry.targets ?? []).filter { validTarget($0) }
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                IshaCatalogRemoteImage(urlString: entry.base_image)
+                    .frame(width: 48, height: 54)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(.white.opacity(0.10), lineWidth: 1))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(entry.hero.uppercased())
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                        .foregroundColor(ConverterPalette.blue)
+                    Text(entry.base_name)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(ConverterPalette.text)
+                        .lineLimit(2)
+                    Text("BASE SKIN")
+                        .font(.system(size: 8, weight: .heavy, design: .rounded))
+                        .foregroundColor(ConverterPalette.muted)
+                }
+
+                Spacer(minLength: 0)
+
+                if selectedReplacements[entry.id] != nil {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(ConverterPalette.green)
+                }
+            }
+
+            HStack {
+                Text("REPLACE WITH")
+                    .font(.system(size: 8, weight: .heavy, design: .rounded))
+                    .foregroundColor(ConverterPalette.muted)
+                Spacer()
+                Text("\(targets.count) OPTIONS")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundColor(ConverterPalette.muted)
+            }
+
+            LazyVGrid(columns: columns, spacing: 7) {
+                ForEach(targets) { target in
+                    targetButton(target, for: entry)
+                }
+            }
+        }
+        .padding(10)
+        .background(ConverterPalette.field)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private func targetButton(_ target: IshaSkinUpgradeTarget, for entry: IshaSkinUpgradeEntry) -> some View {
+        let selected = selectedReplacements[entry.id] == target.id
+        return Button {
+            guard !isApplying else { return }
+            if selected {
+                selectedReplacements.removeValue(forKey: entry.id)
+            } else {
+                selectedReplacements[entry.id] = target.id
+            }
+        } label: {
+            HStack(spacing: 7) {
+                IshaCatalogRemoteImage(urlString: target.image)
+                    .frame(width: 34, height: 40)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(target.name)
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(selected ? ConverterPalette.green : ConverterPalette.text)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Text((target.type ?? "UPGRADE").uppercased())
+                        .font(.system(size: 7, weight: .heavy, design: .rounded))
+                        .foregroundColor(ConverterPalette.muted)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(selected ? ConverterPalette.green : ConverterPalette.muted)
+            }
+            .padding(7)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background(selected ? ConverterPalette.green.opacity(0.10) : ConverterPalette.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(selected ? ConverterPalette.green.opacity(0.65) : .white.opacity(0.06), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isApplying)
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: 9) {
+            ProgressView().tint(ConverterPalette.blue)
+            Text("Loading all skin replacement options…")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(ConverterPalette.muted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 32)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+    }
+
+    private func errorState(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Replacement catalog unavailable")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(ConverterPalette.text)
+            Text(message)
+                .font(.system(size: 10))
+                .foregroundColor(ConverterPalette.muted)
+            Button("RETRY") {
+                Task { await loadCatalog() }
+            }
+            .font(.system(size: 10, weight: .heavy, design: .rounded))
+            .foregroundColor(ConverterPalette.blue)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 25))
+                .foregroundColor(ConverterPalette.muted)
+            Text("No matching base skins")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(ConverterPalette.text)
+            Text("Try another hero, base skin or target name.")
+                .font(.system(size: 10))
+                .foregroundColor(ConverterPalette.muted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("BATCH CONVERSION NOTES")
+                .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                .foregroundColor(ConverterPalette.muted)
+            Text("Choose one replacement per base skin. You can combine different base skins and heroes in one batch. Original downloaded ZIP files are kept in Script Skin Downloads / Multi Replace Originals.")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(ConverterPalette.muted.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 4)
+    }
+
+    @MainActor
+    private func loadCatalog() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            var request = URLRequest(url: catalogURL)
+            request.timeoutInterval = 45
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw IshaCatalogError.invalidResponse
+            }
+            let decoded = try JSONDecoder().decode(IshaSkinUpgradeCatalogResponse.self, from: data)
+            entries = decoded.skin_upgrades
+            errorMessage = nil
+        } catch {
+            errorMessage = "Could not refresh the replacement catalog. Check internet connection. (\(error.localizedDescription))"
+        }
+    }
+
+    private func validTarget(_ target: IshaSkinUpgradeTarget) -> Bool {
+        guard target.enabled != false,
+              let address = target.script,
+              let url = URL(string: address),
+              url.scheme?.lowercased() == "https" else { return false }
+        return url.pathExtension.lowercased() == "zip"
+    }
+
+    @MainActor
+    private func downloadAndConvert() async {
+        guard !isApplying else { return }
+        let jobs = selectedJobs
+        guard !jobs.isEmpty else { return }
+
+        isApplying = true
+        errorMessage = nil
+        statusMessage = nil
+        processingMessage = "Preparing \(jobs.count) skin replacement(s)…"
+
+        var stagingRoot: URL?
+        defer {
+            isApplying = false
+            processingMessage = nil
+            if let stagingRoot {
+                try? FileManager.default.removeItem(at: stagingRoot)
+            }
+        }
+
+        do {
+            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let batchID = String(UUID().uuidString.prefix(10))
+            let batchName = "Multi_Replace_\(batchID)"
+            let staging = documents
+                .appendingPathComponent("Multi Replace Staging", isDirectory: true)
+                .appendingPathComponent(batchName, isDirectory: true)
+            stagingRoot = staging
+
+            let archiveFolder = staging.appendingPathComponent("archives", isDirectory: true)
+            let backupFolder = documents
+                .appendingPathComponent("Script Skin Downloads", isDirectory: true)
+                .appendingPathComponent("Multi Replace Originals", isDirectory: true)
+                .appendingPathComponent(batchName, isDirectory: true)
+            try FileManager.default.createDirectory(at: archiveFolder, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: backupFolder, withIntermediateDirectories: true)
+
+            let marker = staging.appendingPathComponent(".isha_multi_replace_manifest.json")
+            try Data("isha-multi-replace-v1".utf8).write(to: marker, options: .atomic)
+
+            var totalBytes: Int64 = 0
+            for (index, job) in jobs.enumerated() {
+                guard let address = job.target.script,
+                      let url = URL(string: address),
+                      url.scheme?.lowercased() == "https",
+                      url.pathExtension.lowercased() == "zip" else {
+                    throw IshaCatalogError.invalidResponse
+                }
+
+                processingMessage = "Downloading \(index + 1)/\(jobs.count): \(job.target.name)"
+                let (temporaryURL, response) = try await URLSession.shared.download(from: url)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw IshaCatalogError.invalidResponse
+                }
+
+                let attributes = try FileManager.default.attributesOfItem(atPath: temporaryURL.path)
+                let fileSize = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+                guard fileSize > 0, fileSize <= 2_000_000_000 else {
+                    throw IshaCatalogError.invalidArchiveSize
+                }
+                totalBytes += fileSize
+                guard totalBytes <= 2_000_000_000 else {
+                    throw IshaCatalogError.multiReplaceBatchTooLarge
+                }
+
+                let archiveName = safeFileName(
+                    job.entry.hero + " - " + job.entry.base_name + " to " + job.target.name
+                ) + ".zip"
+                let original = backupFolder.appendingPathComponent(archiveName)
+                let staged = archiveFolder.appendingPathComponent(archiveName)
+
+                if FileManager.default.fileExists(atPath: original.path) {
+                    try FileManager.default.removeItem(at: original)
+                }
+                try FileManager.default.moveItem(at: temporaryURL, to: original)
+                try FileManager.default.copyItem(at: original, to: staged)
+            }
+
+            processingMessage = "Converting all \(jobs.count) selected skin replacements to iOS…"
+            let outputDirectory = documents
+                .appendingPathComponent("Isha Converter iOS", isDirectory: true)
+                .appendingPathComponent("Auto Converted Multi Replace", isDirectory: true)
+            try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+            let conversionResult: Result<URL, Error> = await withCheckedContinuation { continuation in
+                PythonConverter.shared.convert(input: staging, outputDirectory: outputDirectory) { result in
+                    continuation.resume(returning: result)
+                }
+            }
+
+            switch conversionResult {
+            case .success(let convertedURL):
+                shareURL = convertedURL
+                showShareSheet = true
+                statusMessage = "Completed: \(jobs.count) replacement archive(s) were combined and converted into one iOS-ready ZIP. Original ZIP files are backed up."
+                selectedReplacements.removeAll()
+            case .failure(let conversionError):
+                errorMessage = "The selected archives were downloaded, but the combined conversion failed. The original ZIP files are backed up. \(conversionError.localizedDescription)"
+            }
+        } catch {
+            errorMessage = "Multi Replace stopped. \(error.localizedDescription)"
+        }
+    }
+
+    private func safeFileName(_ value: String) -> String {
+        let cleaned = value.replacingOccurrences(
+            of: "[^A-Za-z0-9._ -]",
+            with: "_",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "Skin" : cleaned
     }
 }
