@@ -621,7 +621,10 @@ private struct NixHubHeroCatalogView: View {
         .searchable(text: $searchText, prompt: "Search heroes, roles or lanes")
         .overlay(alignment: .top) {
             if filteredHeroes.isEmpty {
-                ContentUnavailableView.search(text: searchText)
+                Text("No heroes found for \"\(searchText)\".")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 24)
             }
         }
     }
