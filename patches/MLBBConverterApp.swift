@@ -1213,7 +1213,8 @@ private struct ToolResplendentView: View {
                     .foregroundColor(.secondary)
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    ForEach(colors, id: \.0) { item in
+                    ForEach(colors.indices, id: \.self) { index in
+                        let item = colors[index]
                         Button {
                             selectedColor = item.0
                         } label: {
