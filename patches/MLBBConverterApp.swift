@@ -2164,12 +2164,14 @@ private enum IshaCatalogError: LocalizedError {
     case invalidResponse
     case invalidArchiveSize
     case emptyCatalog
+    case multiReplaceBatchTooLarge
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse: return "The catalog or download server returned an invalid response."
         case .invalidArchiveSize: return "The downloaded archive is empty or exceeds the 2 GB safety limit."
         case .emptyCatalog: return "The catalog contains no heroes."
+        case .multiReplaceBatchTooLarge: return "The selected replacement ZIP files exceed the 2 GB total batch limit. Select fewer skins and try again."
         }
     }
 }
@@ -2875,7 +2877,7 @@ private struct IshaMultiReplaceLibraryView: View {
                     if isApplying {
                         ProgressView().tint(.white).scaleEffect(0.85)
                     } else {
-                        Image(systemName: "arrow.down.to.line.compact")
+                        Image(systemName: "arrow.down.to.line")
                     }
                     Text(isApplying ? "PROCESSING SELECTED SKINS…" : "DOWNLOAD + CONVERT SELECTED")
                     Spacer()
