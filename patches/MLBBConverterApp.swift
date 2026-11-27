@@ -392,11 +392,11 @@ private struct GameLookView: View {
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
+    @Environment(\.dismiss) private var dismiss
 
     private let gold = Color(red: 0.91, green: 0.72, blue: 0.39)
 
     var body: some View {
-        NavigationView {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
@@ -526,10 +526,7 @@ private struct GameLookView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        // The navigation stack is dismissed by the system's back action.
-                    }
-                    .disabled(true)
+                    Button("Done") { dismiss() }
                 }
             }
             .confirmationDialog("Reset the saved Game Look profile?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
@@ -544,9 +541,8 @@ private struct GameLookView: View {
             } message: {
                 Text(alertMessage)
             }
-        }
-        .tint(gold)
-        .preferredColorScheme(.dark)
+            .tint(gold)
+            .preferredColorScheme(.dark)
     }
 
     private func saveProfile() {
