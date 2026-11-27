@@ -115,15 +115,21 @@ def _webdav_cache_root(path: Path) -> Path | None:
 
 
 
-def _expand_multi_skin_archives(source_root, scratch_root, safe_extract_zip, log):
-    """Expand selected skin ZIPs into one input tree without silently overwriting files."""
+def _expand_multi_skin_archives(archive_root, scratch_root, log):
+    """Flatten selected and nested skin ZIPs into one safe input ZIP."""
     import hashlib
     import shutil
-    from pathlib import Path
+    import stat
+    import zipfile
+    from pathlib import Path, PurePosixPath
 
-    source_root = Path(source_root)
+    archive_root = Path(archive_root)
     scratch_root = Path(scratch_root)
-    scratch_root.mkdir(parents=True, exist_ok=True)
+    expanded_root = scratch_root / "expanded_skin_tree"
+    expanded_root.mkdir(parents=True, exist_ok=True)
+    max_uncompressed_bytes = 4 * 1024 * 1024 * 1024
+    total_uncompressed_bytes = 0
+    extracted_count = 0
 
     def digest(path: Path) -> str:
         value = hashlib.sha256()
@@ -132,71 +138,119 @@ def _expand_multi_skin_archives(source_root, scratch_root, safe_extract_zip, log
                 value.update(chunk)
         return value.hexdigest()
 
-    processed = set()
-    extracted_count = 0
+    def safe_extract(archive_path: Path, destination: Path) -> None:
+        root = destination.resolve()
+        destination.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            for info in archive.infolist():
+                normalized = info.filename.replace("\\", "/")
+                relative = PurePosixPath(normalized)
+                if (
+                    not normalized
+                    or relative.is_absolute()
+                    or any(part in ("", ".", "..") for part in relative.parts)
+                    or (relative.parts and relative.parts[0].endswith(":"))
+                ):
+                    raise RuntimeError(
+                        f"Unsafe path in skin archive '{archive_path.name}': {info.filename}"
+                    )
+
+                mode = (info.external_attr >> 16) & 0xFFFF
+                if stat.S_ISLNK(mode):
+                    raise RuntimeError(
+                        f"Symbolic links are not allowed in skin ZIPs: {info.filename}"
+                    )
+
+                target = (root / Path(*relative.parts)).resolve()
+                if target != root and root not in target.parents:
+                    raise RuntimeError(
+                        f"Archive path escapes the extraction folder: {info.filename}"
+                    )
+
+                if info.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info, "r") as source, target.open("wb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+
+    def merge_extraction(extraction: Path) -> None:
+        nonlocal total_uncompressed_bytes
+        for item in sorted(extraction.rglob("*")):
+            relative = item.relative_to(extraction)
+            destination = expanded_root / relative
+            if item.is_dir():
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                if digest(item) == digest(destination):
+                    log(f"Multi Replace: skipped identical duplicate {relative.as_posix()}")
+                    continue
+                raise RuntimeError(
+                    "Multi Replace conflict: selected skin ZIPs contain different files "
+                    f"at '{relative.as_posix()}'. Remove one conflicting replacement."
+                )
+
+            size = item.stat().st_size
+            if total_uncompressed_bytes + size > max_uncompressed_bytes:
+                raise RuntimeError(
+                    "Multi Replace unpacked files exceed the 4 GB safety limit. "
+                    "Select fewer replacement skins."
+                )
+            shutil.copy2(item, destination)
+            total_uncompressed_bytes += size
+
     for depth in range(3):
+        search_root = archive_root if depth == 0 else expanded_root
         archives = sorted(
-            path for path in source_root.rglob("*")
-            if path.is_file()
-            and path.suffix.lower() == ".zip"
-            and str(path.resolve()) not in processed
+            path for path in search_root.rglob("*")
+            if path.is_file() and path.suffix.lower() == ".zip"
         )
         if not archives:
             break
 
-        for index, archive in enumerate(archives, 1):
-            processed.add(str(archive.resolve()))
+        for archive_path in archives:
             extracted_count += 1
-            extraction = scratch_root / f"pack_{extracted_count:04d}"
-            extraction.mkdir(parents=True, exist_ok=True)
-            log(f"Multi Replace: extracting {archive.name} ({extracted_count})")
-            safe_extract_zip(archive, extraction)
+            extraction = scratch_root / f"extract_{extracted_count:04d}"
+            log(f"Multi Replace: extracting {archive_path.name} (level {depth + 1})")
+            try:
+                safe_extract(archive_path, extraction)
+                merge_extraction(extraction)
+            finally:
+                shutil.rmtree(extraction, ignore_errors=True)
 
-            for item in sorted(extraction.rglob("*")):
-                relative = item.relative_to(extraction)
-                destination = source_root / relative
-                if item.is_dir():
-                    destination.mkdir(parents=True, exist_ok=True)
-                    continue
+            if depth > 0:
+                archive_path.unlink(missing_ok=True)
 
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                if destination.exists():
-                    if digest(item) == digest(destination):
-                        log(f"Multi Replace: skipped identical duplicate {relative.as_posix()}")
-                        continue
-                    raise RuntimeError(
-                        "Multi Replace conflict: two selected skin archives contain "
-                        f"different files at '{relative.as_posix()}'. Remove one of the "
-                        "conflicting replacements and try again."
-                    )
-                shutil.copy2(item, destination)
-            archive.unlink()
-
-    remaining = [
-        path for path in source_root.rglob("*")
+    nested_archives = [
+        path for path in expanded_root.rglob("*")
         if path.is_file() and path.suffix.lower() == ".zip"
     ]
-    if remaining:
+    if nested_archives:
         raise RuntimeError(
-            "Multi Replace contains nested ZIP archives deeper than the supported "
-            "three levels: " + ", ".join(path.name for path in remaining[:5])
+            "Multi Replace has nested ZIP files deeper than three levels: "
+            + ", ".join(path.name for path in nested_archives[:5])
         )
     if extracted_count == 0:
         raise RuntimeError("Multi Replace batch is empty: no skin ZIP archives were found.")
 
-    # Remove empty archive folders, but never remove the batch root.
-    for folder in sorted(
-        (path for path in source_root.rglob("*") if path.is_dir()),
-        key=lambda path: len(path.parts),
-        reverse=True,
-    ):
-        try:
-            folder.rmdir()
-        except OSError:
-            pass
+    combined_zip = scratch_root / "Multi_Replace_Combined.zip"
+    with zipfile.ZipFile(combined_zip, "w", compression=zipfile.ZIP_STORED) as output:
+        for item in sorted(expanded_root.rglob("*")):
+            if item.is_file():
+                output.write(item, item.relative_to(expanded_root).as_posix())
 
-    log(f"Multi Replace: expanded {extracted_count} archive(s) into a shared skin tree.")
-    return extracted_count
+    if combined_zip.stat().st_size == 0:
+        raise RuntimeError("Multi Replace created an empty combined input archive.")
+
+    log(
+        f"Multi Replace: combined {extracted_count} archive(s), "
+        f"{total_uncompressed_bytes} unpacked bytes into {combined_zip.name}."
+    )
+    return combined_zip
 
 
 def run_conversion(input_path: str, shader_path: str, output_path: str, display_name: str) -> str:
@@ -226,7 +280,7 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
             _diagnostic(parent, f"shader-folder setup warning: {type(shader_exc).__name__}: {shader_exc}")
         with redirect_stdout(capture), redirect_stderr(capture):
             _diagnostic(parent, "importing mlbb_ios_converter / UnityPy")
-            from mlbb_ios_converter import Converter, ConvertOptions, prepare_input, safe_extract_zip
+            from mlbb_ios_converter import Converter, ConvertOptions
             _diagnostic(parent, "mlbb_ios_converter / UnityPy imported")
             _diagnostic(parent, "importing texture decoder dependencies")
             import texture2ddecoder
@@ -309,26 +363,19 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
                         return
                     return super()._validate_all()
 
-            _diagnostic(parent, "preparing input archive/folder")
-            prepared_temp = tempfile.TemporaryDirectory(prefix="isha_converter_input_")
-            prepared_root = prepare_input(
-                Path(input_path),
-                Path(prepared_temp.name),
-                lambda message: _diagnostic(parent, message),
-            )
-            multi_marker = prepared_root / ".isha_multi_replace_manifest.json"
+            converter_input = Path(input_path)
+            multi_marker = converter_input / ".isha_multi_replace_manifest.json"
             if multi_marker.is_file():
-                _expand_multi_skin_archives(
-                    prepared_root,
-                    Path(prepared_temp.name) / "multi_replace_extracts",
-                    safe_extract_zip,
+                prepared_temp = tempfile.TemporaryDirectory(prefix="isha_multi_replace_")
+                converter_input = _expand_multi_skin_archives(
+                    Path(input_path) / "archives",
+                    Path(prepared_temp.name),
                     lambda message: _diagnostic(parent, message),
                 )
-                multi_marker.unlink(missing_ok=True)
-            _diagnostic(parent, f"prepared input root: {prepared_root}")
+            _diagnostic(parent, f"converter input prepared: {converter_input}")
 
             _diagnostic(parent, "creating converter")
-            converter = _SpaceSavingConverter(Path(prepared_root), Path(shader_path), parent,
+            converter = _SpaceSavingConverter(Path(converter_input), Path(shader_path), parent,
                 ConvertOptions(create_zip=True, full_validation=False, strict_matching=True, preserve_shadows=True),
                 logger=logs.append,
                 progress=lambda value, message: logs.append(f"[{value:.0f}%] {message}"))
