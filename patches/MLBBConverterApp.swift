@@ -2060,9 +2060,13 @@ private struct IshaCatalogTag: Decodable, Identifiable {
         case name, icon, file, description
     }
 
+    var displayName: String {
+        stableID.contains("anniversary") ? "10TH ANNIVERSARY" : name.uppercased()
+    }
+
     var infoTitle: String {
         let normalized = (name + " " + (file ?? "")).lowercased()
-        if normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
+        if stableID.contains("anniversary") || normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
             return "10th Anniversary Skin"
         }
         if let supplied = description?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2078,7 +2082,7 @@ private struct IshaCatalogTag: Decodable, Identifiable {
             return supplied
         }
         let normalized = (name + " " + (file ?? "")).lowercased()
-        if normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
+        if stableID.contains("anniversary") || normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
             return "10th Anniversary-themed exclusive Epic skin."
         }
         switch stableID {
@@ -2110,6 +2114,15 @@ private struct IshaCatalogTagEditTarget: Identifiable {
     let heroName: String
     let category: String?
     var id: String { skin.stableID }
+}
+
+private struct IshaCatalogTagInfoTarget: Identifiable {
+    let tag: IshaCatalogTag
+    let heroName: String
+    let skinName: String
+    let skinImage: String?
+
+    var id: String { tag.stableID + "|" + heroName + "|" + skinName }
 }
 
 private struct IshaCatalogHeroGroup: Identifiable {
@@ -2161,42 +2174,30 @@ private struct IshaCatalogRemoteImage: View {
 
 private struct IshaSkinTagBadgeStack: View {
     let tags: [IshaCatalogTag]
-    @State private var activeTagID: String?
+    let onTap: (IshaCatalogTag) -> Void
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 3) {
+        HStack(spacing: 4) {
             ForEach(Array(tags.prefix(2))) { tag in
                 Button {
-                    activeTagID = tag.stableID
+                    onTap(tag)
                 } label: {
                     HStack(spacing: 3) {
-                        IshaCatalogTagArtwork(iconURL: tag.icon)
-                            .frame(width: 30, height: 19)
-                        Text(tag.name)
+                        IshaCatalogTagArtwork(tag: tag)
+                            .frame(width: 26, height: 17)
+                        Text(tag.displayName)
                             .font(.system(size: 7, weight: .heavy, design: .rounded))
                             .foregroundColor(.white)
                             .lineLimit(1)
-                            .frame(maxWidth: 25, alignment: .leading)
                     }
-                    .padding(.horizontal, 3)
-                    .padding(.vertical, 2)
-                    .background(Color.black.opacity(0.86))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 4)
+                    .background(Color.black.opacity(0.84))
                     .clipShape(Capsule())
+                    .overlay(Capsule().stroke(ConverterPalette.blue.opacity(0.28), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .popover(
-                    isPresented: Binding(
-                        get: { activeTagID == tag.stableID },
-                        set: { isPresented in
-                            if !isPresented && activeTagID == tag.stableID {
-                                activeTagID = nil
-                            }
-                        }
-                    ),
-                    arrowEdge: .top
-                ) {
-                    IshaSkinTagInfoCard(tag: tag)
-                }
+                .accessibilityLabel("View \(tag.displayName) skin tag details")
             }
 
             if tags.count > 2 {
@@ -2204,44 +2205,105 @@ private struct IshaSkinTagBadgeStack: View {
                     .font(.system(size: 7, weight: .heavy, design: .rounded))
                     .foregroundColor(.white)
                     .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
-                    .background(Color.black.opacity(0.86))
+                    .padding(.vertical, 4)
+                    .background(Color.black.opacity(0.84))
                     .clipShape(Capsule())
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
-private struct IshaSkinTagInfoCard: View {
+private struct IshaSkinTagInfoSheet: View {
+    @Environment(\.presentationMode) private var presentationMode
     let tag: IshaCatalogTag
+    let heroName: String
+    let skinName: String
+    let skinImage: String?
+
+    private var anniversarySkin: Bool {
+        tag.stableID.contains("anniversary")
+            || skinName.localizedCaseInsensitiveContains("anniversary")
+            || skinName.localizedCaseInsensitiveContains("10th")
+    }
+
+    private var titleText: String {
+        anniversarySkin ? "10th Anniversary Skin" : tag.infoTitle
+    }
+
+    private var descriptionText: String {
+        anniversarySkin
+            ? "10th Anniversary-themed exclusive Epic skin."
+            : tag.infoDescription
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                IshaCatalogTagArtwork(iconURL: tag.icon)
-                    .frame(width: 112, height: 62)
+        NavigationView {
+            ZStack {
+                ConverterPalette.background.ignoresSafeArea()
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(tag.infoTitle)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                VStack(alignment: .leading, spacing: 15) {
+                    HStack {
+                        Text("SKIN TAG DETAILS")
+                            .font(.system(size: 10, weight: .heavy, design: .rounded))
+                            .foregroundColor(ConverterPalette.muted)
+                        Spacer()
+                        Button {
+                            presentationMode.wrappedValue.dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(ConverterPalette.text)
+                                .frame(width: 34, height: 34)
+                                .background(ConverterPalette.panel)
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    HStack(spacing: 12) {
+                        IshaCatalogTagArtwork(tag: tag)
+                            .frame(width: 138, height: 78)
+                            .padding(7)
+                            .background(ConverterPalette.field)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "diamond.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(Color(red: 0.65, green: 0.40, blue: 1.0))
+                                Text(titleText)
+                                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                                    .foregroundColor(.white)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Text(tag.name.uppercased())
+                                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                                .foregroundColor(ConverterPalette.blue)
+                            Text(heroName + " · " + skinName)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(ConverterPalette.muted)
+                                .lineLimit(2)
+                        }
+                    }
+
+                    Text(descriptionText)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color(red: 0.72, green: 0.79, blue: 0.88))
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(tag.name.uppercased())
-                        .font(.system(size: 9, weight: .heavy, design: .rounded))
-                        .foregroundColor(ConverterPalette.blue)
-                }
-            }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(ConverterPalette.panel)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text(tag.infoDescription)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Color(red: 0.72, green: 0.79, blue: 0.88))
-                .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                }
+                .padding(16)
+            }
+            .navigationBarHidden(true)
         }
-        .padding(15)
-        .frame(width: 292, alignment: .leading)
-        .background(Color(red: 0.035, green: 0.055, blue: 0.15))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
 
@@ -2405,7 +2467,7 @@ private struct IshaSkinTagPickerView: View {
                 ZStack(alignment: .topTrailing) {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(ConverterPalette.field)
-                    IshaCatalogTagArtwork(iconURL: tag.icon)
+                    IshaCatalogTagArtwork(tag: tag)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 8)
                     if isSelected {
@@ -2443,10 +2505,10 @@ private struct IshaSkinTagPickerView: View {
 }
 
 private struct IshaCatalogTagArtwork: View {
-    let iconURL: String?
+    let tag: IshaCatalogTag
 
     var body: some View {
-        AsyncImage(url: URL(string: iconURL ?? "")) { phase in
+        AsyncImage(url: URL(string: tag.icon ?? "")) { phase in
             switch phase {
             case .success(let image):
                 image.resizable().scaledToFit()
@@ -2460,12 +2522,17 @@ private struct IshaCatalogTagArtwork: View {
     }
 
     private var fallback: some View {
-        ZStack {
+        let isAnniversary = tag.stableID.contains("anniversary")
+        return ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(ConverterPalette.panel)
-            Image(systemName: "tag.fill")
+            Image(systemName: isAnniversary ? "diamond.fill" : "tag.fill")
                 .font(.system(size: 17, weight: .medium))
-                .foregroundColor(ConverterPalette.blue.opacity(0.85))
+                .foregroundColor(
+                    isAnniversary
+                        ? Color(red: 0.68, green: 0.43, blue: 1.0)
+                        : ConverterPalette.blue.opacity(0.85)
+                )
         }
     }
 }
