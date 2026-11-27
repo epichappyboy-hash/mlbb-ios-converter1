@@ -1046,7 +1046,9 @@ private struct AssetDocumentPicker: UIViewControllerRepresentable {
 private struct IshaScriptSkinCatalogView: View {
     @Environment(\.presentationMode) private var presentationMode
     @AppStorage("isha.catalog.download.history") private var historyJSON = "[]"
+    @AppStorage("isha.catalog.skin.tag.assignments.v1") private var skinTagAssignmentsJSON = "{}"
 
+    @State private var tagEditingTarget: IshaCatalogTagEditTarget?
     @State private var heroes: [IshaCatalogHero] = []
     @State private var isLoading = false
     @State private var searchText = ""
@@ -1081,13 +1083,81 @@ private struct IshaScriptSkinCatalogView: View {
         }
     }
 
+    private var tagLibrary: [IshaCatalogTag] {
+        let heroNames = Set(heroes.map { $0.name.lowercased() })
+        let genericNames: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup"]
+        var unique: [String: IshaCatalogTag] = [:]
+
+        for hero in heroes {
+            for skin in hero.skins {
+                for tag in skin.tags ?? [] {
+                    let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let key = name.lowercased()
+                    guard !name.isEmpty, !heroNames.contains(key), !genericNames.contains(key) else { continue }
+                    if let existing = unique[tag.stableID] {
+                        if (existing.icon ?? "").isEmpty && !(tag.icon ?? "").isEmpty {
+                            unique[tag.stableID] = tag
+                        }
+                    } else {
+                        unique[tag.stableID] = tag
+                    }
+                }
+            }
+        }
+        return unique.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
     private var availableTags: [String] {
         let values = heroes.flatMap { hero in
             hero.skins.flatMap { skin in
-                skin.searchTags(heroName: hero.name, category: hero.category)
+                skin.searchTags(heroName: hero.name, category: hero.category) + assignedTagNames(for: skin)
             }
         }
-        return ["All"] + Set(values).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return ["All"] + Set(values + tagLibrary.map { $0.name })
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    private var savedTagAssignments: [String: [String]] {
+        guard let data = skinTagAssignmentsJSON.data(using: .utf8),
+              let values = try? JSONDecoder().decode([String: [String]].self, from: data) else { return [:] }
+        return values
+    }
+
+    private func selectedTagIDs(for skin: IshaCatalogSkin) -> Set<String> {
+        Set(savedTagAssignments[skin.stableID] ?? [])
+    }
+
+    private func assignedTagNames(for skin: IshaCatalogSkin) -> [String] {
+        let selected = selectedTagIDs(for: skin)
+        return tagLibrary.filter { selected.contains($0.stableID) }.map { $0.name }
+    }
+
+    private func saveTagAssignments(_ ids: [String], for skin: IshaCatalogSkin) {
+        var values = savedTagAssignments
+        let cleaned = Array(Set(ids)).sorted()
+        if cleaned.isEmpty { values.removeValue(forKey: skin.stableID) }
+        else { values[skin.stableID] = cleaned }
+        if let data = try? JSONEncoder().encode(values),
+           let json = String(data: data, encoding: .utf8) {
+            skinTagAssignmentsJSON = json
+        }
+    }
+
+    private func visibleSkinTags(for skin: IshaCatalogSkin, heroName: String, category: String?) -> [IshaCatalogTag] {
+        let heroKey = heroName.lowercased()
+        let categoryKey = (category ?? "").lowercased()
+        var result: [IshaCatalogTag] = []
+        for tag in skin.tags ?? [] {
+            let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.lowercased() != heroKey, name.lowercased() != categoryKey,
+                  !result.contains(where: { $0.stableID == tag.stableID }) else { continue }
+            result.append(tag)
+        }
+        let selected = selectedTagIDs(for: skin)
+        for tag in tagLibrary where selected.contains(tag.stableID) {
+            if !result.contains(where: { $0.stableID == tag.stableID }) { result.insert(tag, at: 0) }
+        }
+        return result
     }
 
     private var visibleGroups: [IshaCatalogHeroGroup] {
@@ -1104,6 +1174,7 @@ private struct IshaScriptSkinCatalogView: View {
                 if featuredOnly && skin.featured != true { return false }
 
                 let tags = skin.searchTags(heroName: hero.name, category: hero.category)
+                    + assignedTagNames(for: skin)
                 if selectedTag != "All" &&
                     !tags.contains(where: { $0.caseInsensitiveCompare(selectedTag) == .orderedSame }) {
                     return false
@@ -1210,6 +1281,19 @@ private struct IshaScriptSkinCatalogView: View {
             if let shareURL {
                 ActivityView(activityItems: [shareURL])
             }
+        }
+        .sheet(item: $tagEditingTarget) { target in
+            IshaSkinTagPickerView(
+                skinName: target.skin.skin_name ?? "Custom Skin",
+                heroName: target.heroName,
+                tags: tagLibrary,
+                initialSelection: selectedTagIDs(for: target.skin),
+                onCancel: { tagEditingTarget = nil },
+                onSave: { ids in
+                    saveTagAssignments(ids, for: target.skin)
+                    tagEditingTarget = nil
+                }
+            )
         }
     }
 
@@ -1579,6 +1663,26 @@ private struct IshaScriptSkinCatalogView: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(ConverterPalette.muted)
 
+                    Button {
+                        tagEditingTarget = IshaCatalogTagEditTarget(
+                            skin: skin,
+                            heroName: heroName,
+                            category: category
+                        )
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "tag.fill")
+                                .font(.system(size: 9, weight: .bold))
+                            Text("EDIT SKIN TAGS")
+                                .font(.system(size: 8, weight: .heavy, design: .rounded))
+                            Text("\(selectedTagIDs(for: skin).count)")
+                                .font(.system(size: 8, weight: .bold, design: .rounded))
+                                .foregroundColor(ConverterPalette.green)
+                        }
+                        .foregroundColor(ConverterPalette.blue)
+                    }
+                    .buttonStyle(.plain)
+
                     if downloadingIDs.contains(skin.stableID) {
                         HStack(spacing: 6) {
                             ProgressView().tint(ConverterPalette.blue).scaleEffect(0.8)
@@ -1617,19 +1721,24 @@ private struct IshaScriptSkinCatalogView: View {
                 .disabled(downloadingIDs.contains(skin.stableID))
             }
 
-            let tags = skin.searchTags(heroName: heroName, category: category)
+            let tags = visibleSkinTags(for: skin, heroName: heroName, category: category)
             if !tags.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        ForEach(tags, id: \.self) { tag in
-                            Text("#\(tag)")
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundColor(tag.caseInsensitiveCompare("Uncategorized") == .orderedSame
-                                    ? ConverterPalette.muted : ConverterPalette.blue)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(ConverterPalette.blue.opacity(0.09))
-                                .clipShape(Capsule())
+                    HStack(alignment: .center, spacing: 8) {
+                        ForEach(tags) { tag in
+                            VStack(spacing: 4) {
+                                IshaCatalogTagArtwork(iconURL: tag.icon)
+                                    .frame(width: 54, height: 28)
+                                Text(tag.name)
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundColor(ConverterPalette.muted)
+                                    .lineLimit(1)
+                                    .frame(width: 68)
+                            }
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 6)
+                            .background(ConverterPalette.panel)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
                 }
@@ -1821,8 +1930,32 @@ private struct IshaCatalogSkin: Decodable, Identifiable {
     }
 }
 
-private struct IshaCatalogTag: Decodable {
+private struct IshaCatalogTag: Decodable, Identifiable {
+    let tagID: String?
     let name: String
+    let icon: String?
+    let file: String?
+
+    enum CodingKeys: String, CodingKey {
+        case tagID = "id"
+        case name, icon, file
+    }
+
+    var stableID: String {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let slug = value.replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return slug.isEmpty ? (tagID ?? "tag") : slug
+    }
+
+    var id: String { stableID }
+}
+
+private struct IshaCatalogTagEditTarget: Identifiable {
+    let skin: IshaCatalogSkin
+    let heroName: String
+    let category: String?
+    var id: String { skin.stableID }
 }
 
 private struct IshaCatalogHeroGroup: Identifiable {
@@ -1868,5 +2001,231 @@ private struct IshaCatalogRemoteImage: View {
         }
         .background(ConverterPalette.field)
         .clipped()
+    }
+}
+
+
+private struct IshaSkinTagPickerView: View {
+    let skinName: String
+    let heroName: String
+    let tags: [IshaCatalogTag]
+    let onCancel: () -> Void
+    let onSave: ([String]) -> Void
+
+    @State private var searchText = ""
+    @State private var selectedIDs: Set<String>
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 9),
+        GridItem(.flexible(), spacing: 9),
+        GridItem(.flexible(), spacing: 9)
+    ]
+
+    init(
+        skinName: String,
+        heroName: String,
+        tags: [IshaCatalogTag],
+        initialSelection: Set<String>,
+        onCancel: @escaping () -> Void,
+        onSave: @escaping ([String]) -> Void
+    ) {
+        self.skinName = skinName
+        self.heroName = heroName
+        self.tags = tags
+        self.onCancel = onCancel
+        self.onSave = onSave
+        _selectedIDs = State(initialValue: initialSelection)
+    }
+
+    private var filteredTags: [IshaCatalogTag] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return tags }
+        return tags.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                ConverterPalette.background.ignoresSafeArea()
+
+                VStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("CHOOSE SKIN TAGS")
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .foregroundColor(ConverterPalette.text)
+                        Text("\(heroName) · \(skinName)")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(ConverterPalette.muted)
+                            .lineLimit(2)
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(ConverterPalette.green)
+                            Text("\(selectedIDs.count) selected")
+                                .foregroundColor(ConverterPalette.green)
+                            Spacer()
+                            Text("\(tags.count) available tags")
+                                .foregroundColor(ConverterPalette.muted)
+                        }
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.top, 3)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(ConverterPalette.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+
+                    HStack(spacing: 9) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(ConverterPalette.blue)
+                        TextField("Search tag name…", text: $searchText)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(ConverterPalette.text)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        if !searchText.isEmpty {
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(ConverterPalette.muted)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 13)
+                    .frame(height: 46)
+                    .background(ConverterPalette.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                    ScrollView(showsIndicators: false) {
+                        if filteredTags.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "tag")
+                                    .font(.system(size: 25))
+                                    .foregroundColor(ConverterPalette.muted)
+                                Text("No tags found")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundColor(ConverterPalette.text)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 35)
+                        } else {
+                            LazyVGrid(columns: columns, spacing: 9) {
+                                ForEach(filteredTags) { tag in
+                                    tagCell(tag)
+                                }
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 10) {
+                        Button(action: onCancel) {
+                            Text("CANCEL")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .foregroundColor(ConverterPalette.text)
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                                .background(ConverterPalette.panel)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            onSave(Array(selectedIDs).sorted())
+                        } label: {
+                            HStack(spacing: 7) {
+                                Image(systemName: "checkmark")
+                                Text("DONE")
+                                Text("(\(selectedIDs.count))")
+                                    .opacity(0.75)
+                            }
+                            .font(.system(size: 11, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                            .background(ConverterPalette.blue)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(14)
+            }
+            .navigationBarHidden(true)
+            .preferredColorScheme(.dark)
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
+    }
+
+    private func tagCell(_ tag: IshaCatalogTag) -> some View {
+        let isSelected = selectedIDs.contains(tag.stableID)
+        return Button {
+            if isSelected { selectedIDs.remove(tag.stableID) }
+            else { selectedIDs.insert(tag.stableID) }
+        } label: {
+            VStack(spacing: 7) {
+                ZStack(alignment: .topTrailing) {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(ConverterPalette.field)
+                    IshaCatalogTagArtwork(iconURL: tag.icon)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 8)
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(ConverterPalette.green)
+                            .padding(5)
+                            .background(ConverterPalette.field.opacity(0.92))
+                            .clipShape(Circle())
+                    }
+                }
+                .frame(height: 63)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(isSelected ? ConverterPalette.green : ConverterPalette.muted.opacity(0.18), lineWidth: isSelected ? 1.7 : 1)
+                )
+
+                Text(tag.name)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(isSelected ? ConverterPalette.green : ConverterPalette.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 24, alignment: .top)
+            }
+            .padding(6)
+            .background(isSelected ? ConverterPalette.green.opacity(0.07) : ConverterPalette.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? ConverterPalette.green.opacity(0.55) : .clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct IshaCatalogTagArtwork: View {
+    let iconURL: String?
+
+    var body: some View {
+        AsyncImage(url: URL(string: iconURL ?? "")) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFit()
+            case .empty, .failure:
+                fallback
+            @unknown default:
+                fallback
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var fallback: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(ConverterPalette.panel)
+            Image(systemName: "tag.fill")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundColor(ConverterPalette.blue.opacity(0.85))
+        }
     }
 }
