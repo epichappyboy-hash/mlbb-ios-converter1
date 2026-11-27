@@ -1125,7 +1125,11 @@ private struct IshaScriptSkinCatalogView: View {
                 for tag in skin.tags ?? [] {
                     let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
                     let key = name.lowercased()
-                    guard !name.isEmpty, !heroNames.contains(key), !genericNames.contains(key) else { continue }
+                    let skinNameKey = (skin.skin_name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    guard !name.isEmpty,
+                          !heroNames.contains(key),
+                          !genericNames.contains(key),
+                          key != skinNameKey else { continue }
                     if let existing = unique[tag.stableID] {
                         if (existing.icon ?? "").isEmpty && !(tag.icon ?? "").isEmpty {
                             unique[tag.stableID] = tag
@@ -1227,22 +1231,47 @@ private struct IshaScriptSkinCatalogView: View {
     }
 
     private func visibleSkinTags(for skin: IshaCatalogSkin, heroName: String, category: String?) -> [IshaCatalogTag] {
-        let heroKey = heroName.lowercased()
-        let categoryKey = (category ?? "").lowercased()
+        let heroKey = heroName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let categoryKey = (category ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let skinNameKey = (skin.skin_name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let genericNames: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup", "uncategorized", "featured"]
         var result: [IshaCatalogTag] = []
 
-        for tag in skin.tags ?? [] {
-            let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty, name.lowercased() != heroKey, name.lowercased() != categoryKey,
-                  !result.contains(where: { $0.stableID == tag.stableID }) else { continue }
-            result.append(tag)
+        func appendRealTag(_ rawTag: IshaCatalogTag) {
+            let cleanedName = rawTag.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = cleanedName.lowercased()
+            guard !key.isEmpty,
+                  key != heroKey,
+                  key != categoryKey,
+                  key != skinNameKey,
+                  !genericNames.contains(key),
+                  !result.contains(where: { $0.stableID == rawTag.stableID }) else { return }
+
+            // Several skin records contain a real tag name but omit its image URL.
+            // Resolve it from another record with the same canonical tag name.
+            let canonical = tagByIDCache[rawTag.stableID]
+            let resolvedIcon = (rawTag.icon?.isEmpty == false) ? rawTag.icon : canonical?.icon
+            let resolvedFile = (rawTag.file?.isEmpty == false) ? rawTag.file : canonical?.file
+            let resolved = IshaCatalogTag(
+                tagID: rawTag.tagID ?? canonical?.tagID,
+                name: rawTag.name,
+                icon: resolvedIcon,
+                file: resolvedFile,
+                description: rawTag.description ?? canonical?.description
+            )
+            result.append(resolved)
+        }
+
+        for rawTag in skin.tags ?? [] {
+            appendRealTag(rawTag)
         }
 
         for tagID in assignmentsCache[skin.stableID] ?? [] {
-            guard let tag = tagByIDCache[tagID],
-                  !result.contains(where: { $0.stableID == tag.stableID }) else { continue }
-            result.insert(tag, at: 0)
+            if let tag = tagByIDCache[tagID] {
+                appendRealTag(tag)
+            }
         }
+
         return result
     }
 
@@ -1731,6 +1760,22 @@ private struct IshaScriptSkinCatalogView: View {
                 IshaCatalogRemoteImage(urlString: skin.image)
                     .frame(width: 64, height: 72)
                     .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .overlay(alignment: .topTrailing) {
+                        IshaSkinTagBadgeStack(
+                            tags: visibleSkinTags(for: skin, heroName: heroName, category: category),
+                            onTap: { tag in
+                                activeCatalogSheet = .tagInfo(
+                                    IshaCatalogTagInfoTarget(
+                                        tag: tag,
+                                        heroName: heroName,
+                                        skinName: skin.skin_name ?? "Custom Skin",
+                                        skinImage: skin.image
+                                    )
+                                )
+                            }
+                        )
+                        .padding(3)
+                    }
                     .overlay(RoundedRectangle(cornerRadius: 11).stroke(.white.opacity(0.10), lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 5) {
@@ -1745,20 +1790,6 @@ private struct IshaScriptSkinCatalogView: View {
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundColor(ConverterPalette.green)
                         }
-                        Spacer(minLength: 2)
-                        IshaSkinTagBadgeStack(
-                            tags: visibleSkinTags(for: skin, heroName: heroName, category: category),
-                            onTap: { tag in
-                                activeCatalogSheet = .tagInfo(
-                                    IshaCatalogTagInfoTarget(
-                                        tag: tag,
-                                        heroName: heroName,
-                                        skinName: skin.skin_name ?? "Custom Skin",
-                                        skinImage: skin.image
-                                    )
-                                )
-                            }
-                        )
                     }
 
                     Text(heroName)
@@ -2221,40 +2252,35 @@ private struct IshaSkinTagBadgeStack: View {
     let onTap: (IshaCatalogTag) -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(Array(tags.prefix(2))) { tag in
+        VStack(alignment: .trailing, spacing: 3) {
+            ForEach(tags) { tag in
                 Button {
                     onTap(tag)
                 } label: {
-                    HStack(spacing: 3) {
-                        IshaCatalogTagArtwork(tag: tag)
-                            .frame(width: 26, height: 17)
-                        Text(tag.displayName)
-                            .font(.system(size: 7, weight: .heavy, design: .rounded))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
+                    ZStack {
+                        Capsule()
+                            .fill(Color.black.opacity(0.90))
+                        if let iconURL = tag.icon, !iconURL.isEmpty {
+                            IshaCatalogTagArtwork(tag: tag)
+                                .padding(.horizontal, 2)
+                                .padding(.vertical, 1)
+                        } else {
+                            Text(tag.displayName)
+                                .font(.system(size: 7, weight: .heavy, design: .rounded))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.65)
+                                .padding(.horizontal, 4)
+                        }
                     }
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.84))
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(ConverterPalette.blue.opacity(0.28), lineWidth: 1))
+                    .frame(width: 51, height: 19)
+                    .overlay(Capsule().stroke(ConverterPalette.blue.opacity(0.55), lineWidth: 0.8))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("View \(tag.displayName) skin tag details")
             }
-
-            if tags.count > 2 {
-                Text("+\(tags.count - 2)")
-                    .font(.system(size: 7, weight: .heavy, design: .rounded))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.84))
-                    .clipShape(Capsule())
-            }
         }
-        .fixedSize(horizontal: true, vertical: false)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
     }
 }
 
@@ -2566,17 +2592,16 @@ private struct IshaCatalogTagArtwork: View {
     }
 
     private var fallback: some View {
-        let isAnniversary = tag.stableID.contains("anniversary")
-        return ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(ConverterPalette.panel)
-            Image(systemName: isAnniversary ? "diamond.fill" : "tag.fill")
-                .font(.system(size: 17, weight: .medium))
-                .foregroundColor(
-                    isAnniversary
-                        ? Color(red: 0.68, green: 0.43, blue: 1.0)
-                        : ConverterPalette.blue.opacity(0.85)
-                )
+        ZStack {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color(red: 0.10, green: 0.13, blue: 0.25))
+            Text(tag.displayName)
+                .font(.system(size: 6, weight: .heavy, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.65)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 2)
         }
     }
 }
