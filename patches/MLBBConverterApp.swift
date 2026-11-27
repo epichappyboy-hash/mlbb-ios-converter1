@@ -1,4 +1,5 @@
 import SwiftUI
+import Compression
 import UniformTypeIdentifiers
 import UIKit
 
@@ -819,95 +820,410 @@ private struct ToolInfoPanel: View {
     }
 }
 
-private enum ToolSkinFilter: String, CaseIterable {
-    case all = "All"
-    case official = "Official"
-    case anime = "Anime"
-    case custom = "Custom"
-    case backup = "Backup"
-    case preview = "Preview"
-    case replacement = "Replacement"
+private struct ToolSkinCatalogDocument: Decodable {
+    let catalogVersion: String
+    let heroCount: Int
+    let skinCount: Int
+    let heroes: [ToolSkinCatalogHero]
+}
+
+private struct ToolSkinCatalogHero: Decodable, Identifiable {
+    let heroId: Int
+    let skins: [ToolSkinCatalogEntry]
+    var id: Int { heroId }
+}
+
+private struct ToolSkinCatalogEntry: Decodable, Hashable {
+    let id: Int
+    let name: String
+    let category: Int
+    let type: String
+    let backupAvailable: Bool
+    let upgradeCount: Int
+    var stableID: String { "\(id)-\(category)" }
+}
+
+private final class ToolSkinCatalogStore: ObservableObject {
+    static let shared = ToolSkinCatalogStore()
+
+    @Published private(set) var document: ToolSkinCatalogDocument?
+    @Published private(set) var loadError: String?
+
+    private init() {
+        load()
+    }
+
+    private func load() {
+        let url = Bundle.main.bundleURL
+            .appendingPathComponent("app", isDirectory: true)
+            .appendingPathComponent("isha_skin_catalog.json.zlib")
+        guard let compressed = try? Data(contentsOf: url) else {
+            loadError = "Skin catalog file is missing from this build."
+            return
+        }
+
+        let capacity = 2 * 1024 * 1024
+        var expanded = Data(count: capacity)
+        let decodedSize = compressed.withUnsafeBytes { sourceBuffer in
+            expanded.withUnsafeMutableBytes { destinationBuffer in
+                guard let source = sourceBuffer.bindMemory(to: UInt8.self).baseAddress,
+                      let destination = destinationBuffer.bindMemory(to: UInt8.self).baseAddress else {
+                    return 0
+                }
+                return compression_decode_buffer(
+                    destination,
+                    capacity,
+                    source,
+                    compressed.count,
+                    nil,
+                    COMPRESSION_ZLIB
+                )
+            }
+        }
+
+        guard decodedSize > 0 else {
+            loadError = "The built-in skin catalog could not be decompressed."
+            return
+        }
+        expanded.count = decodedSize
+
+        do {
+            document = try JSONDecoder().decode(ToolSkinCatalogDocument.self, from: expanded)
+        } catch {
+            loadError = "The built-in skin catalog is invalid: \(error.localizedDescription)"
+        }
+    }
+
+    func hero(_ heroId: Int) -> ToolSkinCatalogHero? {
+        document?.heroes.first(where: { $0.heroId == heroId })
+    }
+
+    func skinName(heroId: Int, skinId: Int, category: Int) -> String? {
+        hero(heroId)?.skins.first(where: { $0.id == skinId && $0.category == category })?.name
+    }
+}
+
+private struct ToolSkinSelection: Codable, Equatable {
+    let heroId: Int
+    let heroName: String
+    let skinId: Int
+    let skinName: String
+    let category: Int
+}
+
+private final class ToolSkinSelectionStore: ObservableObject {
+    static let shared = ToolSkinSelectionStore()
+
+    @Published private(set) var original: ToolSkinSelection?
+    @Published private(set) var replacement: ToolSkinSelection?
+
+    private let originalKey = "isha.mlbbtools.skinSelection.original.v1"
+    private let replacementKey = "isha.mlbbtools.skinSelection.replacement.v1"
+
+    private init() {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: originalKey) {
+            original = try? JSONDecoder().decode(ToolSkinSelection.self, from: data)
+        }
+        if let data = defaults.data(forKey: replacementKey) {
+            replacement = try? JSONDecoder().decode(ToolSkinSelection.self, from: data)
+        }
+    }
+
+    func select(_ selection: ToolSkinSelection, asOriginal: Bool) {
+        if asOriginal {
+            original = selection
+        } else {
+            replacement = selection
+        }
+        persist()
+    }
+
+    func clear() {
+        original = nil
+        replacement = nil
+        UserDefaults.standard.removeObject(forKey: originalKey)
+        UserDefaults.standard.removeObject(forKey: replacementKey)
+    }
+
+    private func persist() {
+        let defaults = UserDefaults.standard
+        if let original, let data = try? JSONEncoder().encode(original) {
+            defaults.set(data, forKey: originalKey)
+        }
+        if let replacement, let data = try? JSONEncoder().encode(replacement) {
+            defaults.set(data, forKey: replacementKey)
+        }
+    }
+}
+
+private struct ToolSkinHeroSection: Identifiable {
+    let hero: ToolHero
+    let skins: [ToolSkinCatalogEntry]
+    var id: Int { hero.id }
 }
 
 private struct ToolSkinLibraryView: View {
     @ObservedObject var history: ToolHistoryStore
+    @ObservedObject private var catalog = ToolSkinCatalogStore.shared
+    @ObservedObject private var selection = ToolSkinSelectionStore.shared
     @State private var searchText = ""
-    @State private var selectedFilter: ToolSkinFilter = .all
+    @State private var selectedCategory = "All"
 
-    private var importedPackages: [ToolHistoryRecord] {
-        history.records.filter { $0.action == "Imported" || $0.action == "Converted" }
+    private let categoryFilters = ["All", "Slot 0", "Slot 1", "Slot 2"]
+
+    private var visibleSections: [ToolSkinHeroSection] {
+        guard let document = catalog.document else { return [] }
+        return document.heroes.compactMap { catalogHero in
+            guard let hero = ToolCatalog.heroes.first(where: { $0.id == catalogHero.heroId }) else {
+                return nil
+            }
+            let categoryFiltered = catalogHero.skins.filter { skin in
+                selectedCategory == "All" || selectedCategory == "Slot \(skin.category)"
+            }
+            let matchingSkins: [ToolSkinCatalogEntry]
+            if searchText.isEmpty || hero.name.localizedCaseInsensitiveContains(searchText) {
+                matchingSkins = categoryFiltered
+            } else {
+                matchingSkins = categoryFiltered.filter {
+                    $0.name.localizedCaseInsensitiveContains(searchText) ||
+                    $0.type.localizedCaseInsensitiveContains(searchText) ||
+                    String($0.id).contains(searchText)
+                }
+            }
+            guard !matchingSkins.isEmpty else { return nil }
+            return ToolSkinHeroSection(hero: hero, skins: matchingSkins)
+        }
     }
 
-    private var visiblePackages: [ToolHistoryRecord] {
-        guard selectedFilter == .all || selectedFilter == .custom || selectedFilter == .backup else {
-            return []
-        }
-        return importedPackages.filter { record in
-            searchText.isEmpty || record.fileName.localizedCaseInsensitiveContains(searchText)
-        }
+    private var selectedPairDescription: String {
+        let original = selection.original.map { "\($0.heroName) · \($0.skinName)" } ?? "Not selected"
+        let replacement = selection.replacement.map { "\($0.heroName) · \($0.skinName)" } ?? "Not selected"
+        return "Original: \(original)\nReplacement: \(replacement)"
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(ToolSkinFilter.allCases, id: \.self) { filter in
-                        Button {
-                            selectedFilter = filter
-                        } label: {
-                            Text(filter.rawValue)
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 11)
-                                .padding(.vertical, 8)
-                                .background(selectedFilter == filter ? Color.blue.opacity(0.16) : Color(.secondarySystemGroupedBackground))
-                                .foregroundColor(selectedFilter == filter ? .blue : .secondary)
-                                .clipShape(Capsule())
+            VStack(alignment: .leading, spacing: 10) {
+                ToolInfoPanel(
+                    title: "Skin Catalog",
+                    message: catalog.document.map {
+                        "\($0.skinCount.formatted()) skin entries across \($0.heroCount) heroes. Search by hero, skin name, type, or skin ID. The catalog contains metadata only; skin packages must be supplied separately."
+                    } ?? (catalog.loadError ?? "Loading skin catalog…")
+                )
+
+                ToolInfoPanel(
+                    title: "Selected Skin Pair",
+                    message: selectedPairDescription
+                )
+
+                HStack {
+                    Text("FILTER BY CATEGORY")
+                        .font(.caption.bold())
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    if selection.original != nil || selection.replacement != nil {
+                        Button("Clear selection", role: .destructive) {
+                            selection.clear()
                         }
-                        .buttonStyle(.plain)
+                        .font(.caption.weight(.semibold))
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-            }
 
-            if visiblePackages.isEmpty {
+                Picker("Category", selection: $selectedCategory) {
+                    ForEach(categoryFilters, id: \.self) { filter in
+                        Text(filter).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+
+            if catalog.document == nil {
                 VStack(spacing: 10) {
                     Image(systemName: "square.grid.2x2")
                         .font(.system(size: 38))
                         .foregroundColor(.secondary)
-                    Text(selectedFilter == .all || selectedFilter == .custom || selectedFilter == .backup ? "No local packages yet" : "\(selectedFilter.rawValue) catalog unavailable")
-                        .font(.headline)
-                    Text("The supplied XAPK loads its live skin catalog from an external content source; it does not bundle a complete skin package library. Import your own supported package in Installer to see it here.")
+                    Text("Skin catalog unavailable").font(.headline)
+                    Text(catalog.loadError ?? "The built-in catalog could not be loaded.")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
-                .padding(26)
+                .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(visiblePackages) { record in
-                    NavigationLink(destination: ToolPackageDetailView(record: record)) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "archivebox.fill")
-                                .font(.title2)
-                                .foregroundColor(.blue)
-                                .frame(width: 42, height: 42)
-                                .background(Color.blue.opacity(0.10))
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(record.fileName).font(.subheadline.weight(.semibold)).lineLimit(2)
-                                Text("Local import • \(record.date.formatted(date: .abbreviated, time: .shortened))")
-                                    .font(.caption)
+                List {
+                    ForEach(visibleSections) { section in
+                        Section {
+                            ForEach(section.skins, id: \.stableID) { skin in
+                                NavigationLink {
+                                    ToolSkinDetailView(hero: section.hero, skin: skin, selection: selection)
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        ZStack {
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .fill(Color.blue.opacity(0.10))
+                                            Image(systemName: "person.crop.square")
+                                                .font(.title2)
+                                                .foregroundColor(.blue)
+                                        }
+                                        .frame(width: 44, height: 48)
+
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(skin.name)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundColor(.primary)
+                                            Text("ID \(skin.id) · Slot \(skin.category)")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                            if !skin.type.isEmpty {
+                                                Text(skin.type.replacingOccurrences(of: "|", with: " · "))
+                                                    .font(.caption2)
+                                                    .foregroundColor(.secondary)
+                                                    .lineLimit(1)
+                                            }
+                                        }
+                                        Spacer(minLength: 4)
+                                        if skin.backupAvailable || skin.upgradeCount > 0 {
+                                            Image(systemName: "arrow.triangle.2.circlepath")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundColor(.blue)
+                                        }
+                                    }
+                                    .padding(.vertical, 3)
+                                }
+                            }
+                        } header: {
+                            HStack {
+                                Text(section.hero.name)
+                                Spacer()
+                                Text("\(section.skins.count) skins")
                                     .foregroundColor(.secondary)
                             }
                         }
-                        .padding(.vertical, 3)
+                    }
+
+                    let importedPackages = history.records.filter {
+                        $0.action == "Imported" || $0.action == "Converted"
+                    }
+                    if !importedPackages.isEmpty {
+                        Section("My imported packages") {
+                            ForEach(importedPackages) { record in
+                                NavigationLink(destination: ToolPackageDetailView(record: record)) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(record.fileName)
+                                            .font(.subheadline.weight(.semibold))
+                                            .lineLimit(2)
+                                        Text(record.details)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                .listStyle(.plain)
+                .listStyle(.insetGrouped)
             }
         }
-        .searchable(text: $searchText, prompt: "Search local packages")
+        .background(Color(.systemGroupedBackground))
+        .searchable(text: $searchText, prompt: "Search heroes, skins, or IDs")
+    }
+}
+
+private struct ToolSkinDetailView: View {
+    let hero: ToolHero
+    let skin: ToolSkinCatalogEntry
+    @ObservedObject var selection: ToolSkinSelectionStore
+    @State private var notice: String?
+
+    private var selectionValue: ToolSkinSelection {
+        ToolSkinSelection(
+            heroId: hero.id,
+            heroName: hero.name,
+            skinId: skin.id,
+            skinName: skin.name,
+            category: skin.category
+        )
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.blue.opacity(0.20), Color.purple.opacity(0.12)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    VStack(spacing: 8) {
+                        Image(systemName: "person.crop.square")
+                            .font(.system(size: 54))
+                            .foregroundColor(.blue)
+                        Text(skin.name)
+                            .font(.title3.bold())
+                            .multilineTextAlignment(.center)
+                        Text(hero.name)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(24)
+                }
+                .frame(height: 190)
+
+                ToolInfoPanel(
+                    title: "Skin metadata",
+                    message: "Skin ID: \(skin.id)\nHero ID: \(hero.id)\nCategory slot: \(skin.category)\nType: \(skin.type.isEmpty ? "Unspecified" : skin.type.replacingOccurrences(of: "|", with: " · "))"
+                )
+
+                ToolInfoPanel(
+                    title: "Package references",
+                    message: "\(skin.backupAvailable ? "A backup reference is listed" : "No backup reference is listed") · \(skin.upgradeCount) related upgrade routes in the source catalog. These are catalog references, not bundled skin files."
+                )
+
+                VStack(spacing: 10) {
+                    Button {
+                        selection.select(selectionValue, asOriginal: true)
+                        notice = "Saved \(skin.name) as the original skin selection."
+                    } label: {
+                        Label("Select as Original Skin", systemImage: "arrow.down.left.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        selection.select(selectionValue, asOriginal: false)
+                        notice = "Saved \(skin.name) as the replacement skin selection."
+                    } label: {
+                        Label("Select as Replacement Skin", systemImage: "arrow.triangle.swap")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Text("The selection is saved locally in Isha. Converting an imported package does not automatically modify or install anything inside Mobile Legends.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            .padding(16)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Skin Details")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Skin selection", isPresented: Binding(
+            get: { notice != nil },
+            set: { if !$0 { notice = nil } }
+        )) {
+            Button("OK", role: .cancel) { notice = nil }
+        } message: {
+            Text(notice ?? "")
+        }
     }
 }
 
@@ -963,6 +1279,7 @@ private struct ToolPackageDetailView: View {
 
 private struct ToolInstallerView: View {
     @ObservedObject var history: ToolHistoryStore
+    @ObservedObject private var skinSelection = ToolSkinSelectionStore.shared
     @State private var showPicker = false
     @State private var selectedURL: URL?
     @State private var outputURL: URL?
@@ -988,6 +1305,13 @@ private struct ToolInstallerView: View {
                     title: "Unity Asset Processor",
                     message: "This uses the existing Isha Converter Python/UnityPy engine. Import a .unity3d bundle or ZIP, choose an ASTC quality profile, then convert and export the iOS-ready ZIP."
                 )
+
+                if skinSelection.original != nil || skinSelection.replacement != nil {
+                    ToolInfoPanel(
+                        title: "Selected Skin Pair",
+                        message: "Original: \(skinSelection.original.map { "\($0.heroName) · \($0.skinName)" } ?? "Not selected")\nReplacement: \(skinSelection.replacement.map { "\($0.heroName) · \($0.skinName)" } ?? "Not selected")\n\nThese are saved catalog selections. The converter processes the package you import; it does not apply the pair to the installed game."
+                    )
+                }
 
                 Button {
                     showPicker = true

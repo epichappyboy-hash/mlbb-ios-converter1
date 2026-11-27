@@ -393,7 +393,66 @@ jobs:
           test -f app/converter_bridge.py
           test -f app/mlbb_ios_converter.py
           cp ../../patches/high_texture_decoder.py app/high_texture_decoder.py
+          # Fetch only public skin catalog metadata. No skin artwork or replacement
+          # archives are bundled in this iOS app.
+          curl -fsSL "https://raw.githubusercontent.com/nutcx/app-content/9d5f2801724aa93628599183ab63b07d1b93acb9/Document.mlbytes" -o /tmp/nutcracker-Document.mlbytes
+          python3 - <<'PY'
+          import hashlib, json, struct, zlib
+          from pathlib import Path
+
+          blob = Path("/tmp/nutcracker-Document.mlbytes").read_bytes()
+          if blob[:8] != b"MLBYTES\x00":
+              raise SystemExit("Unexpected NutCracker catalog container")
+          major, minor, flags, header_size, schema, min_app, reserved, release, revision, count, directory_size = struct.unpack_from("<HH9I", blob, 8)
+          if major != 1 or schema != 3 or count > 64:
+              raise SystemExit(f"Unsupported catalog format/schema: {major}/{schema}")
+          payload_offset, stored_payload_size, total_uncompressed_size, signature_offset = struct.unpack_from("<QQQQ", blob, 0x30)
+          position = header_size
+          heroes_payload = None
+          for _ in range(count):
+              path_length = struct.unpack_from("<H", blob, position)[0]
+              codec = blob[position + 2]
+              relative_offset, stored_size, original_size = struct.unpack_from("<QQQ", blob, position + 8)
+              digest = blob[position + 32:position + 64]
+              path = blob[position + 64:position + 64 + path_length].decode("utf-8")
+              start = payload_offset + relative_offset
+              stored = blob[start:start + stored_size]
+              raw = zlib.decompress(stored) if codec == 1 else stored
+              if len(raw) != original_size or hashlib.sha256(raw).digest() != digest:
+                  raise SystemExit(f"Catalog entry failed size/hash validation: {path}")
+              if path == "heroes.json":
+                  heroes_payload = json.loads(raw.decode("utf-8"))
+              position += 64 + path_length
+
+          if not heroes_payload or not isinstance(heroes_payload.get("heroes"), list):
+              raise SystemExit("heroes.json is missing or malformed")
+          heroes = []
+          for hero in heroes_payload["heroes"]:
+              skins = []
+              for skin in hero.get("skins", []):
+                  source = skin.get("source") or {}
+                  skins.append({
+                      "id": int(skin["skinId"]),
+                      "name": str(skin["name"]),
+                      "category": int(skin.get("category", 0)),
+                      "type": str(skin.get("type", "")),
+                      "backupAvailable": bool(source.get("backupArchive")),
+                      "upgradeCount": len(source.get("upgrades", []))
+                  })
+              heroes.append({"heroId": int(hero["heroId"]), "skins": skins})
+
+          result = {
+              "catalogVersion": f"NutCracker content {release}.{revision}",
+              "heroCount": len(heroes),
+              "skinCount": sum(len(hero["skins"]) for hero in heroes),
+              "heroes": heroes
+          }
+          encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+          Path("app/isha_skin_catalog.json.zlib").write_bytes(zlib.compress(encoded, level=9))
+          print(f"Prepared {result['skinCount']} skin entries for {result['heroCount']} heroes")
+          PY
           test -f app/high_texture_decoder.py
+          test -s app/isha_skin_catalog.json.zlib
           test -f app/verified_shader_mappings.json
           test -s app/ios_shaders/ShaderVariants.unity3d
           test -s app/ios_shaders/ShaderVariantsInBattle.unity3d
@@ -407,6 +466,7 @@ jobs:
           test -f "$app/app/converter_bridge.py"
           test -f "$app/app/mlbb_ios_converter.py"
           test -f "$app/app/verified_shader_mappings.json"
+          test -s "$app/app/isha_skin_catalog.json.zlib"
           test -s "$app/app/ios_shaders/ShaderVariants.unity3d"
           test -f "$app/app_packages/UnityPy/__init__.py"
           test -f "$app/app_packages/PIL/__init__.py"
