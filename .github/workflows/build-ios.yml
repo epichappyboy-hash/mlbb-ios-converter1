@@ -230,10 +230,13 @@ jobs:
           from pathlib import Path
           path = Path("Sources/Info.plist")
           data = plistlib.loads(path.read_bytes())
-          if data.get("CFBundleIdentifier") != "com.codex.mlbbconverter":
-              raise SystemExit("Refusing to change the existing MLBB Converter bundle identifier")
+          if data.get("CFBundleIdentifier") not in {"com.codex.mlbbconverter", "com.isha.converter.ios"}:
+              raise SystemExit("Unexpected app bundle identifier; refusing to overwrite an unrelated app identity")
+          data["CFBundleIdentifier"] = "com.isha.converter.ios"
+          data["CFBundleName"] = "Isha Converter iOS"
+          data["CFBundleDisplayName"] = "Isha Converter iOS"
           data["CFBundleShortVersionString"] = "1.1"
-          data["CFBundleVersion"] = "2"
+          data["CFBundleVersion"] = "58"
           for document_type in data.get("CFBundleDocumentTypes", []):
               document_type["CFBundleTypeRole"] = "Editor"
               document_type["LSHandlerRank"] = "Alternate"
