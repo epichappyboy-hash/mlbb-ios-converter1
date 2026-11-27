@@ -1174,8 +1174,8 @@ private struct ToolHistoryView: View {
         }
         .navigationTitle("Install History")
         .toolbar {
-            if !history.records.isEmpty {
-                ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if !history.records.isEmpty {
                     Button("Clear") { showClearConfirmation = true }
                 }
             }
