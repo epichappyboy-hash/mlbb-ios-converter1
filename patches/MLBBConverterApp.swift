@@ -1117,7 +1117,7 @@ private struct IshaScriptSkinCatalogView: View {
 
     @MainActor
     private func rebuildCatalogCaches(for catalog: [IshaCatalogHero]) {
-        let heroNames = Set(catalog.map { $0.name.lowercased() })
+        let heroNames = Set(catalog.map { ishaSkinTagKey($0.name) })
         let genericNames: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup", "default", "uncategorized", "featured"]
         var unique: [String: IshaCatalogTag] = [:]
         var sourceRecords: [IshaCatalogTag] = []
@@ -1126,9 +1126,9 @@ private struct IshaScriptSkinCatalogView: View {
             for skin in hero.skins {
                 for tag in skin.tags ?? [] {
                     let name = tag.canonicalName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let key = name.lowercased()
+                    let key = ishaSkinTagKey(name)
                     let canonicalID = tag.canonicalID
-                    let skinNameKey = (skin.skin_name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    let skinNameKey = ishaSkinTagKey(skin.skin_name ?? "")
                     guard !name.isEmpty,
                           !heroNames.contains(key),
                           !genericNames.contains(key),
@@ -1256,9 +1256,9 @@ private struct IshaScriptSkinCatalogView: View {
     }
 
     private func visibleSkinTags(for skin: IshaCatalogSkin, heroName: String, category: String?) -> [IshaCatalogTag] {
-        let heroKey = heroName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let categoryKey = (category ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let skinNameKey = (skin.skin_name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let heroKey = ishaSkinTagKey(heroName)
+        let categoryKey = ishaSkinTagKey(category ?? "")
+        let skinNameKey = ishaSkinTagKey(skin.skin_name ?? "")
         let genericNames: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup", "default", "uncategorized", "featured"]
         var result: [IshaCatalogTag] = []
 
@@ -1266,7 +1266,7 @@ private struct IshaScriptSkinCatalogView: View {
             // Some source rows put the skin title in name, but the id is the real series (e.g. Heart Afloat -> Valentine).
             let canonical = tagByCanonicalIDCache[rawTag.canonicalID] ?? tagByIDCache[rawTag.stableID] ?? rawTag
             let cleanedName = canonical.canonicalName.trimmingCharacters(in: .whitespacesAndNewlines)
-            let key = cleanedName.lowercased()
+            let key = ishaSkinTagKey(cleanedName)
             let identity = canonical.canonicalID
             guard !key.isEmpty,
                   key != heroKey,
@@ -2114,10 +2114,10 @@ private struct IshaCatalogSkin: Decodable, Identifiable {
         let genericTags: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup", "default", "uncategorized", "featured"]
         let sourceTags = (tags ?? []).map { $0.canonicalName.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter {
-                let key = $0.lowercased()
+                let key = ishaSkinTagKey($0)
                 return !key.isEmpty &&
-                    key != heroName.lowercased() &&
-                    key != (category ?? "").lowercased() &&
+                    key != ishaSkinTagKey(heroName) &&
+                    key != ishaSkinTagKey(category ?? "") &&
                     !genericTags.contains(key)
             }
         for tag in sourceTags {
@@ -2210,6 +2210,12 @@ private struct IshaCatalogTag: Decodable, Identifiable {
     }
 
     var id: String { canonicalID }
+}
+
+private func ishaSkinTagKey(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+        .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
 }
 
 private struct IshaCatalogTagEditTarget: Identifiable {
