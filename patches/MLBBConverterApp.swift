@@ -2304,45 +2304,31 @@ private struct IshaSkinTagBadgeStack: View {
     let onTap: (IshaCatalogTag) -> Void
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 4) {
+        VStack(alignment: .trailing, spacing: 7) {
             ForEach(tags) { tag in
                 Button {
                     onTap(tag)
                 } label: {
-                    HStack(spacing: 6) {
+                    VStack(spacing: 2) {
+                        // The official MLBB tag artwork itself is the button surface.
                         IshaCatalogTagArtwork(tag: tag)
-                            .frame(width: 48, height: 26)
-                            .clipped()
+                            .frame(width: 132, height: 38)
+                            .contentShape(Rectangle())
 
-                        Text(tag.displayName)
-                            .font(.system(size: 8, weight: .heavy, design: .rounded))
-                            .foregroundColor(.white)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.7)
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("TAP FOR DETAILS")
+                            .font(.system(size: 7, weight: .heavy, design: .rounded))
+                            .tracking(0.55)
+                            .foregroundColor(ConverterPalette.blue)
                     }
-                    .padding(.horizontal, 7)
-                    .frame(width: 112, height: 42)
-                    .background(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.10, green: 0.16, blue: 0.27),
-                                Color(red: 0.04, green: 0.07, blue: 0.13)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(ConverterPalette.blue.opacity(0.72), lineWidth: 1))
-                    .contentShape(Capsule())
+                    .frame(width: 132, height: 48)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Open \(tag.displayName) skin tag details")
-                .accessibilityHint("Shows the official skin tag artwork, title, and description")
-                .frame(width: 112, height: 44)
-                .contentShape(Capsule())
+                .accessibilityHint("Shows details for this Mobile Legends skin tag")
+                .frame(width: 132, height: 48)
+                .contentShape(Rectangle())
             }
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -2398,7 +2384,7 @@ private struct IshaSkinTagInfoSheet: View {
 
                     HStack(spacing: 12) {
                         IshaCatalogTagArtwork(tag: tag)
-                            .frame(width: 156, height: 88)
+                            .frame(width: 210, height: 72)
                             .padding(7)
                             .background(ConverterPalette.field)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -2642,32 +2628,69 @@ private struct IshaSkinTagPickerView: View {
 private struct IshaCatalogTagArtwork: View {
     let tag: IshaCatalogTag
 
+    // The catalog stores Fandom thumbnails at 75 px. Request a larger rendition
+    // so the badge remains crisp when shown at its real in-app size.
+    private var artworkURL: URL? {
+        guard let raw = tag.icon?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return nil }
+        let highResolution = raw
+            .replacingOccurrences(of: "/scale-to-width-down/75", with: "/scale-to-width-down/300")
+            .replacingOccurrences(of: "/scale-to-width-down/100", with: "/scale-to-width-down/300")
+        return URL(string: highResolution)
+    }
+
     var body: some View {
-        AsyncImage(url: URL(string: tag.icon ?? "")) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFit()
-            case .empty, .failure:
-                fallback
-            @unknown default:
+        Group {
+            if let artworkURL {
+                AsyncImage(url: artworkURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                    case .empty:
+                        ProgressView().tint(ConverterPalette.blue)
+                    case .failure:
+                        fallback
+                    @unknown default:
+                        fallback
+                    }
+                }
+            } else {
                 fallback
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityHidden(true)
     }
 
+    // A text-only placeholder is used only where the source catalog has no
+    // official image; it is deliberately not presented as official artwork.
     private var fallback: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(Color(red: 0.10, green: 0.13, blue: 0.25))
-            Text(tag.displayName)
-                .font(.system(size: 6, weight: .heavy, design: .rounded))
-                .foregroundColor(.white)
-                .lineLimit(2)
-                .minimumScaleFactor(0.65)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 2)
-        }
+        Text(tag.displayName)
+            .font(.system(size: 11, weight: .heavy, design: .rounded))
+            .tracking(0.25)
+            .foregroundColor(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.13, green: 0.20, blue: 0.34),
+                        Color(red: 0.06, green: 0.09, blue: 0.16)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(ConverterPalette.blue.opacity(0.65), lineWidth: 1)
+            )
     }
 }
 
