@@ -2605,13 +2605,27 @@ private struct IshaMultiReplaceLibraryView: View {
     ]
 
     private var availableTargetCount: Int {
-        entries.reduce(0) { total, entry in
-            total + (entry.targets ?? []).filter { validTarget($0) }.count
+        var total = 0
+        for entry in entries {
+            for target in entry.targets ?? [] {
+                if validTarget(target) {
+                    total += 1
+                }
+            }
         }
+        return total
     }
 
     private var enabledEntryCount: Int {
-        entries.filter { $0.enabled != false && !(($0.targets ?? []).filter { validTarget($0) }).isEmpty }.count
+        var count = 0
+        for entry in entries {
+            guard entry.enabled != false else { continue }
+            let targets = entry.targets ?? []
+            if targets.contains(where: { target in validTarget(target) }) {
+                count += 1
+            }
+        }
+        return count
     }
 
     private var selectedJobs: [IshaSkinUpgradeSelection] {
