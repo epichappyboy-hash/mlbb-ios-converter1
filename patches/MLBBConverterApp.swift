@@ -36,6 +36,15 @@ struct ConverterView: View {
                 Text("Android Unity assets → iOS")
                     .foregroundColor(.secondary)
 
+                NavigationLink {
+                    GameLookView()
+                } label: {
+                    Label("Game Look Editor", systemImage: "paintpalette.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(Color(red: 0.82, green: 0.64, blue: 0.30))
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TEXTURE QUALITY")
                         .font(.caption)
@@ -273,5 +282,282 @@ private struct AssetDocumentPicker: UIViewControllerRepresentable {
             guard let url = urls.first else { return }
             onPick(url)
         }
+    }
+}
+
+
+// MARK: - Game Look profile editor
+// This first iOS implementation stores a local editable profile. It does not
+// claim to inject changes into Mobile Legends' private app container.
+private struct GameLookSkinRename: Identifiable, Codable {
+    var id = UUID()
+    var heroName = ""
+    var currentSkinName = ""
+    var replacementName = ""
+}
+
+private struct GameLookTagChange: Identifiable, Codable {
+    var id = UUID()
+    var currentTag = ""
+    var replacementTag = ""
+    var gemColor = ""
+}
+
+private struct GameLookProfile: Codable {
+    var renameSkinsEnabled = false
+    var skinRenames = [GameLookSkinRename()]
+
+    var lobbyBannerEnabled = false
+    var equippedBanner = ""
+    var replacementBanner = ""
+
+    var rankFrameEnabled = false
+    var currentRank = ""
+    var replacementRankFrame = ""
+
+    var skinTagsEnabled = false
+    var tagChanges = [GameLookTagChange()]
+
+    var killNotificationEnabled = false
+    var equippedKillNotification = ""
+    var replacementKillNotification = ""
+
+    private static let storageKey = "IshaConverter.GameLookProfile.v1"
+
+    static func load() -> GameLookProfile {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let profile = try? JSONDecoder().decode(GameLookProfile.self, from: data) else {
+            return GameLookProfile()
+        }
+        return profile
+    }
+
+    func save() throws {
+        let data = try JSONEncoder().encode(self)
+        UserDefaults.standard.set(data, forKey: Self.storageKey)
+    }
+
+    static func reset() {
+        UserDefaults.standard.removeObject(forKey: storageKey)
+    }
+}
+
+private struct GameLookPreview: View {
+    let before: String
+    let after: String
+
+    var body: some View {
+        HStack(spacing: 9) {
+            VStack(spacing: 5) {
+                Text("BEFORE")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.secondary)
+                Text(before.isEmpty ? "Original" : before)
+                    .font(.system(size: 12, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, minHeight: 38)
+            }
+            .padding(9)
+            .background(Color.white.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            Image(systemName: "arrow.right")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(Color(red: 0.91, green: 0.72, blue: 0.39))
+
+            VStack(spacing: 5) {
+                Text("AFTER")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.secondary)
+                Text(after.isEmpty ? "No change selected" : after)
+                    .font(.system(size: 12, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, minHeight: 38)
+            }
+            .padding(9)
+            .background(Color.white.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(8)
+        .background(Color.black.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct GameLookView: View {
+    @State private var profile = GameLookProfile.load()
+    @State private var showResetConfirmation = false
+    @State private var showAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+
+    private let gold = Color(red: 0.91, green: 0.72, blue: 0.39)
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("GAME LOOK")
+                            .font(.caption.weight(.bold))
+                            .tracking(1.5)
+                            .foregroundColor(gold)
+                        Text("Customize the names and appearance choices you want to use for your MLBB setup.")
+                            .font(.subheadline)
+                        Text("Your selections are saved locally in Isha Converter. This editor does not yet write changes into Mobile Legends' private game files.")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section("2 · SKIN NAMES") {
+                    Toggle("Rename skins", isOn: $profile.renameSkinsEnabled)
+                    if profile.renameSkinsEnabled {
+                        ForEach($profile.skinRenames) { $entry in
+                            VStack(alignment: .leading, spacing: 9) {
+                                TextField("Hero name", text: $entry.heroName)
+                                TextField("Current skin name", text: $entry.currentSkinName)
+                                TextField("Show it as", text: $entry.replacementName)
+                                GameLookPreview(before: entry.currentSkinName, after: entry.replacementName)
+                                HStack {
+                                    Spacer()
+                                    Button(role: .destructive) {
+                                        let id = entry.wrappedValue.id
+                                        profile.skinRenames.removeAll { $0.id == id }
+                                    } label: {
+                                        Label("Remove skin", systemImage: "trash")
+                                            .font(.caption)
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 5)
+                        }
+                        Button {
+                            profile.skinRenames.append(GameLookSkinRename())
+                        } label: {
+                            Label("Add another skin", systemImage: "plus.circle.fill")
+                                .foregroundColor(gold)
+                        }
+                    }
+                }
+
+                Section("3 · TEAM LOBBY BANNER") {
+                    Toggle("Change my lobby banner", isOn: $profile.lobbyBannerEnabled)
+                    if profile.lobbyBannerEnabled {
+                        TextField("Banner I have equipped", text: $profile.equippedBanner)
+                        TextField("Show it as", text: $profile.replacementBanner)
+                        GameLookPreview(before: profile.equippedBanner, after: profile.replacementBanner)
+                    }
+                }
+
+                Section("4 · RANK FRAME (LOADING SCREEN)") {
+                    Toggle("Change the rank frame", isOn: $profile.rankFrameEnabled)
+                    if profile.rankFrameEnabled {
+                        TextField("My rank", text: $profile.currentRank)
+                        TextField("Show it as", text: $profile.replacementRankFrame)
+                        GameLookPreview(before: profile.currentRank, after: profile.replacementRankFrame)
+                    }
+                }
+
+                Section("5 · SKIN TAGS / GEMS") {
+                    Toggle("Change skin tags", isOn: $profile.skinTagsEnabled)
+                    if profile.skinTagsEnabled {
+                        ForEach($profile.tagChanges) { $entry in
+                            VStack(alignment: .leading, spacing: 9) {
+                                TextField("Choose the tag", text: $entry.currentTag)
+                                TextField("Show it as", text: $entry.replacementTag)
+                                TextField("Gem colour (optional)", text: $entry.gemColor)
+                                GameLookPreview(before: entry.currentTag, after: entry.replacementTag)
+                                HStack {
+                                    Spacer()
+                                    Button(role: .destructive) {
+                                        let id = entry.wrappedValue.id
+                                        profile.tagChanges.removeAll { $0.id == id }
+                                    } label: {
+                                        Label("Remove tag", systemImage: "trash")
+                                            .font(.caption)
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 5)
+                        }
+                        Button {
+                            profile.tagChanges.append(GameLookTagChange())
+                        } label: {
+                            Label("Add another tag", systemImage: "plus.circle.fill")
+                                .foregroundColor(gold)
+                        }
+                    }
+                }
+
+                Section("6 · KILL NOTIFICATION") {
+                    Toggle("Change the kill notification", isOn: $profile.killNotificationEnabled)
+                    if profile.killNotificationEnabled {
+                        TextField("Notification I have equipped", text: $profile.equippedKillNotification)
+                        TextField("Show it as", text: $profile.replacementKillNotification)
+                        GameLookPreview(before: profile.equippedKillNotification, after: profile.replacementKillNotification)
+                    }
+                }
+
+                Section {
+                    Button {
+                        saveProfile()
+                    } label: {
+                        Label("Save Game Look profile", systemImage: "square.and.arrow.down")
+                            .frame(maxWidth: .infinity)
+                            .font(.body.weight(.semibold))
+                    }
+                    .tint(gold)
+
+                    Button(role: .destructive) {
+                        showResetConfirmation = true
+                    } label: {
+                        Label("Reset profile", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                } footer: {
+                    Text("Saved profiles stay on this iPhone. No .3105 patch or game-file injection is included.")
+                }
+            }
+            .navigationTitle("Game Look")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        // The navigation stack is dismissed by the system's back action.
+                    }
+                    .disabled(true)
+                }
+            }
+            .confirmationDialog("Reset the saved Game Look profile?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
+                Button("Reset profile", role: .destructive) {
+                    GameLookProfile.reset()
+                    profile = GameLookProfile()
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+            .alert(alertTitle, isPresented: $showAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(alertMessage)
+            }
+        }
+        .tint(gold)
+        .preferredColorScheme(.dark)
+    }
+
+    private func saveProfile() {
+        do {
+            try profile.save()
+            alertTitle = "Profile saved"
+            alertMessage = "Your Game Look selections were saved on this iPhone. They have not been applied to Mobile Legends."
+        } catch {
+            alertTitle = "Could not save"
+            alertMessage = error.localizedDescription
+        }
+        showAlert = true
     }
 }
