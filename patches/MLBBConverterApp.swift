@@ -1049,6 +1049,8 @@ private struct IshaScriptSkinCatalogView: View {
     @AppStorage("isha.catalog.skin.tag.assignments.v1") private var skinTagAssignmentsJSON = "{}"
 
     @State private var tagEditingTarget: IshaCatalogTagEditTarget?
+    @State private var tagInfoTarget: IshaCatalogTagInfoTarget?
+    @State private var showMultiReplaceLibrary = false
     @State private var heroes: [IshaCatalogHero] = []
     @State private var tagLibraryCache: [IshaCatalogTag] = []
     @State private var tagByIDCache: [String: IshaCatalogTag] = [:]
@@ -1357,6 +1359,17 @@ private struct IshaScriptSkinCatalogView: View {
                 }
             )
         }
+        .sheet(item: $tagInfoTarget) { target in
+            IshaSkinTagInfoSheet(
+                tag: target.tag,
+                heroName: target.heroName,
+                skinName: target.skinName,
+                skinImage: target.skinImage
+            )
+        }
+        .sheet(isPresented: $showMultiReplaceLibrary) {
+            IshaMultiReplaceLibraryView()
+        }
     }
 
     private var topBar: some View {
@@ -1383,6 +1396,23 @@ private struct IshaScriptSkinCatalogView: View {
             }
 
             Spacer()
+
+            Button {
+                showMultiReplaceLibrary = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "square.stack.3d.up.fill")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("MULTI")
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                }
+                .foregroundColor(ConverterPalette.green)
+                .padding(.horizontal, 9)
+                .frame(height: 38)
+                .background(ConverterPalette.green.opacity(0.10))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
 
             Button {
                 Task { await loadCatalog() }
@@ -1707,16 +1737,10 @@ private struct IshaScriptSkinCatalogView: View {
                 IshaCatalogRemoteImage(urlString: skin.image)
                     .frame(width: 64, height: 72)
                     .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                    .overlay(alignment: .topTrailing) {
-                        IshaSkinTagBadgeStack(
-                            tags: visibleSkinTags(for: skin, heroName: heroName, category: category)
-                        )
-                        .padding(3)
-                    }
                     .overlay(RoundedRectangle(cornerRadius: 11).stroke(.white.opacity(0.10), lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 5) {
+                    HStack(alignment: .top, spacing: 5) {
                         Text(skin.skin_name ?? "Custom Skin")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(ConverterPalette.text)
@@ -1727,6 +1751,18 @@ private struct IshaScriptSkinCatalogView: View {
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundColor(ConverterPalette.green)
                         }
+                        Spacer(minLength: 2)
+                        IshaSkinTagBadgeStack(
+                            tags: visibleSkinTags(for: skin, heroName: heroName, category: category),
+                            onTap: { tag in
+                                tagInfoTarget = IshaCatalogTagInfoTarget(
+                                    tag: tag,
+                                    heroName: heroName,
+                                    skinName: skin.skin_name ?? "Custom Skin",
+                                    skinImage: skin.image
+                                )
+                            }
+                        )
                     }
 
                     Text(heroName)
