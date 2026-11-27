@@ -2315,6 +2315,18 @@ private struct IshaSkinTagPickerTarget: Identifiable {
     var id: String { ruleID + "|" + slot }
 }
 
+private enum IshaGameLookSheet: Identifiable {
+    case tagPicker(IshaSkinTagPickerTarget)
+    case gemPicker(IshaGemPickerTarget)
+
+    var id: String {
+        switch self {
+        case .tagPicker(let target): return "tag-picker|\(target.id)"
+        case .gemPicker(let target): return "gem-picker|\(target.id)"
+        }
+    }
+}
+
 private struct IshaGemPickerTarget: Identifiable {
     let ruleID: String
     var id: String { ruleID }
@@ -2522,8 +2534,7 @@ private struct IshaGameLookSkinTagsView: View {
     let tags: [IshaCatalogTag]
 
     @State private var rules: [IshaSkinTagReplacementRule] = []
-    @State private var pickerTarget: IshaSkinTagPickerTarget?
-    @State private var gemPickerTarget: IshaGemPickerTarget?
+    @State private var activeGameLookSheet: IshaGameLookSheet?
     @State private var didLoadRules = false
 
     private let gold = Color(red: 0.91, green: 0.70, blue: 0.34)
@@ -2641,32 +2652,34 @@ private struct IshaGameLookSkinTagsView: View {
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .onAppear(perform: loadRules)
-        .sheet(item: $pickerTarget) { target in
-            IshaGameLookTagPickerView(
-                title: target.title,
-                tags: artworkTags,
-                onCancel: { pickerTarget = nil },
-                onSelect: { tag in
-                    updateRule(target.ruleID) { rule in
-                        if target.slot == "source" {
-                            rule.sourceTagID = tag.canonicalID
-                        } else {
-                            rule.displayTagID = tag.canonicalID
+        .sheet(item: $activeGameLookSheet) { route in
+            switch route {
+            case .tagPicker(let target):
+                IshaGameLookTagPickerView(
+                    title: target.title,
+                    tags: artworkTags,
+                    onCancel: { activeGameLookSheet = nil },
+                    onSelect: { tag in
+                        updateRule(target.ruleID) { rule in
+                            if target.slot == "source" {
+                                rule.sourceTagID = tag.canonicalID
+                            } else {
+                                rule.displayTagID = tag.canonicalID
+                            }
                         }
+                        activeGameLookSheet = nil
                     }
-                    pickerTarget = nil
-                }
-            )
-        }
-        .sheet(item: $gemPickerTarget) { target in
-            IshaGameLookGemPickerView(
-                selectedID: rules.first(where: { $0.id == target.ruleID })?.gemColorID ?? "auto",
-                onCancel: { gemPickerTarget = nil },
-                onSelect: { colorID in
-                    updateRule(target.ruleID) { $0.gemColorID = colorID }
-                    gemPickerTarget = nil
-                }
-            )
+                )
+            case .gemPicker(let target):
+                IshaGameLookGemPickerView(
+                    selectedID: rules.first(where: { $0.id == target.ruleID })?.gemColorID ?? "auto",
+                    onCancel: { activeGameLookSheet = nil },
+                    onSelect: { colorID in
+                        updateRule(target.ruleID) { $0.gemColorID = colorID }
+                        activeGameLookSheet = nil
+                    }
+                )
+            }
         }
     }
 
@@ -2745,7 +2758,7 @@ private struct IshaGameLookSkinTagsView: View {
                 .foregroundColor(ConverterPalette.muted)
 
             Button {
-                gemPickerTarget = IshaGemPickerTarget(ruleID: rule.id)
+                activeGameLookSheet = .gemPicker(IshaGemPickerTarget(ruleID: rule.id))
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "diamond.fill")
@@ -2788,7 +2801,7 @@ private struct IshaGameLookSkinTagsView: View {
                 .foregroundColor(ConverterPalette.muted)
 
             Button {
-                pickerTarget = IshaSkinTagPickerTarget(ruleID: ruleID, slot: slot, title: title)
+                activeGameLookSheet = .tagPicker(IshaSkinTagPickerTarget(ruleID: ruleID, slot: slot, title: title))
             } label: {
                 HStack(spacing: 5) {
                     Text("Choose the tag")
