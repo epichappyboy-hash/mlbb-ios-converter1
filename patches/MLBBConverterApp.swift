@@ -1042,14 +1042,17 @@ private struct AssetDocumentPicker: UIViewControllerRepresentable {
 
 
 // MARK: - ISHA Script Skin Catalog
-// Download-only screen. It does not call or modify the Unity converter.
+// Independent download browser. It never invokes the converter engine.
 private struct IshaScriptSkinCatalogView: View {
     @Environment(\.presentationMode) private var presentationMode
     @AppStorage("isha.catalog.download.history") private var historyJSON = "[]"
+
     @State private var heroes: [IshaCatalogHero] = []
     @State private var isLoading = false
     @State private var searchText = ""
-    @State private var selectedCategory = "All"
+    @State private var selectedRole = "All"
+    @State private var selectedTag = "All"
+    @State private var featuredOnly = false
     @State private var downloadingIDs: Set<String> = []
     @State private var shareURL: URL?
     @State private var showShareSheet = false
@@ -1057,173 +1060,132 @@ private struct IshaScriptSkinCatalogView: View {
     @State private var statusMessage: String?
 
     private let catalogURL = URL(string: "https://raw.githubusercontent.com/missnapokita/masterkiter/refs/heads/main/skins.json")!
-
-    private var categories: [String] {
-        let values = Set(heroes.compactMap { $0.category?.capitalized })
-        return ["All"] + values.sorted()
-    }
+    private let roles = ["All", "Assassin", "Fighter", "Mage", "Marksman", "Tank", "Support"]
 
     private var recentDownloads: [String] {
         guard let data = historyJSON.data(using: .utf8),
-              let values = try? JSONDecoder().decode([String].self, from: data) else {
-            return []
-        }
+              let values = try? JSONDecoder().decode([String].self, from: data) else { return [] }
         return values
     }
 
     private var downloadableCount: Int {
-        heroes.reduce(0) { total, hero in
-            guard hero.enabled != false else { return total }
-            return total + hero.skins.filter { $0.enabled != false && validDownloadURL($0.script) }.count
+        heroes.reduce(0) { result, hero in
+            guard hero.enabled != false else { return result }
+            return result + hero.skins.filter { $0.enabled != false && validDownloadURL($0.script) }.count
         }
     }
 
+    private var featuredCount: Int {
+        heroes.reduce(0) { result, hero in
+            result + hero.skins.filter { $0.enabled != false && $0.featured == true && validDownloadURL($0.script) }.count
+        }
+    }
+
+    private var availableTags: [String] {
+        let values = heroes.flatMap { hero in
+            hero.skins.flatMap { skin in
+                skin.searchTags(heroName: hero.name, category: hero.category)
+            }
+        }
+        return ["All"] + Set(values).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
     private var visibleGroups: [IshaCatalogHeroGroup] {
-        heroes.compactMap { hero in
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return heroes.compactMap { hero in
             guard hero.enabled != false else { return nil }
-            if selectedCategory != "All",
-               hero.category?.caseInsensitiveCompare(selectedCategory) != .orderedSame {
+            if selectedRole != "All",
+               hero.category?.caseInsensitiveCompare(selectedRole) != .orderedSame {
                 return nil
             }
 
-            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             let matchingSkins = hero.skins.filter { skin in
                 guard skin.enabled != false, validDownloadURL(skin.script) else { return false }
+                if featuredOnly && skin.featured != true { return false }
+
+                let tags = skin.searchTags(heroName: hero.name, category: hero.category)
+                if selectedTag != "All" &&
+                    !tags.contains(where: { $0.caseInsensitiveCompare(selectedTag) == .orderedSame }) {
+                    return false
+                }
+
                 guard !query.isEmpty else { return true }
-                return hero.name.localizedCaseInsensitiveContains(query)
-                    || (skin.skin_name ?? "").localizedCaseInsensitiveContains(query)
-                    || (skin.tags ?? []).contains { $0.name.localizedCaseInsensitiveContains(query) }
+                let searchable = [
+                    hero.name,
+                    skin.skin_name ?? "",
+                    hero.category ?? "",
+                    tags.joined(separator: " ")
+                ].joined(separator: " ")
+                return searchable.localizedCaseInsensitiveContains(query)
             }
+
             guard !matchingSkins.isEmpty else { return nil }
             return IshaCatalogHeroGroup(hero: hero, skins: matchingSkins)
         }
+    }
+
+    private var visibleCount: Int {
+        visibleGroups.reduce(0) { $0 + $1.skins.count }
     }
 
     var body: some View {
         ZStack {
             ConverterPalette.background.ignoresSafeArea()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 17) {
                     topBar
+                    heroBanner
+                    searchPanel
+                    roleFilters
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("SCRIPT SKIN DOWNLOADS")
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .tracking(1.1)
-                            .foregroundColor(ConverterPalette.muted)
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text("\(downloadableCount)")
-                                .font(.system(size: 30, weight: .bold, design: .rounded))
-                                .foregroundColor(ConverterPalette.text)
-                            Text("downloadable items")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(ConverterPalette.muted)
-                            Spacer()
-                            Button {
-                                Task { await loadCatalog() }
-                            } label: {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 14, weight: .bold))
-                                    .foregroundColor(ConverterPalette.blue)
-                                    .frame(width: 38, height: 38)
-                                    .background(ConverterPalette.field)
-                                    .clipShape(Circle())
-                            }
-                            .disabled(isLoading)
-                        }
-                        Picker("Role", selection: $selectedCategory) {
-                            ForEach(categories, id: \.self) { category in
-                                Text(category).tag(category)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(ConverterPalette.blue)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(16)
-                    .background(ConverterPalette.panel)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                    if !recentDownloads.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("RECENT DOWNLOADS")
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                    if !searchText.isEmpty || selectedRole != "All" || selectedTag != "All" || featuredOnly {
+                        HStack {
+                            Text("FILTERED RESULTS")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
                                 .tracking(1)
                                 .foregroundColor(ConverterPalette.muted)
-                            ForEach(Array(recentDownloads.prefix(5).enumerated()), id: \.offset) { _, name in
-                                HStack(spacing: 8) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(ConverterPalette.green)
-                                    Text(name)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(ConverterPalette.text)
-                                        .lineLimit(1)
-                                    Spacer()
-                                }
-                            }
+                            Spacer()
+                            Text("\(visibleCount) SKINS")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundColor(ConverterPalette.green)
                         }
-                        .padding(14)
-                        .background(ConverterPalette.panel)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    } else {
+                        HStack {
+                            Text("BROWSE ALL HEROES")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .tracking(1)
+                                .foregroundColor(ConverterPalette.muted)
+                            Spacer()
+                            Text("\(heroes.count) HEROES")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundColor(ConverterPalette.muted)
+                        }
                     }
 
                     if isLoading && heroes.isEmpty {
-                        HStack {
-                            Spacer()
-                            ProgressView("Loading script skins…")
-                                .tint(ConverterPalette.blue)
-                            Spacer()
-                        }
-                        .padding(.vertical, 30)
+                        loadingState
                     } else if let errorMessage, heroes.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(errorMessage)
-                                .font(.system(size: 12))
-                                .foregroundColor(ConverterPalette.red)
-                            Button("Try Again") { Task { await loadCatalog() } }
-                                .buttonStyle(.borderedProminent)
-                        }
-                        .padding(16)
-                        .background(ConverterPalette.panel)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        errorState(errorMessage)
+                    } else if visibleGroups.isEmpty {
+                        emptyState
                     } else {
-                        ForEach(visibleGroups) { group in
-                            VStack(alignment: .leading, spacing: 9) {
-                                HStack(spacing: 7) {
-                                    Text(group.hero.name)
-                                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                                        .foregroundColor(ConverterPalette.text)
-                                    Text((group.hero.category ?? "").capitalized)
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundColor(ConverterPalette.green)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(ConverterPalette.green.opacity(0.12))
-                                        .clipShape(Capsule())
-                                    Spacer()
-                                    Text("\(group.skins.count) skins")
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundColor(ConverterPalette.muted)
-                                }
-
-                                ForEach(group.skins) { skin in
-                                    skinRow(skin, heroName: group.hero.name)
-                                }
+                        LazyVStack(alignment: .leading, spacing: 13) {
+                            ForEach(visibleGroups) { group in
+                                heroSection(group)
                             }
-                            .padding(12)
-                            .background(ConverterPalette.panel)
-                            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
                         }
                     }
+
+                    footer
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
-                .padding(.bottom, 28)
+                .padding(.bottom, 34)
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
             }
-            .searchable(text: $searchText, prompt: "Search hero or skin")
+            .refreshable { await loadCatalog() }
         }
         .navigationBarHidden(true)
         .preferredColorScheme(.dark)
@@ -1254,85 +1216,466 @@ private struct IshaScriptSkinCatalogView: View {
     }
 
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 10) {
             Button {
                 presentationMode.wrappedValue.dismiss()
             } label: {
-                Label("BACK", systemImage: "chevron.left")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundColor(ConverterPalette.text)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                    .frame(width: 42, height: 42)
                     .background(ConverterPalette.panel)
-                    .clipShape(Capsule())
+                    .clipShape(Circle())
             }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ISHA CONVERTER")
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .tracking(1.2)
+                    .foregroundColor(ConverterPalette.text)
+                Text("SCRIPT SKIN LIBRARY")
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .tracking(1)
+                    .foregroundColor(ConverterPalette.muted)
+            }
+
             Spacer()
-            Text("ISHA CONVERTER")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .tracking(1)
-                .foregroundColor(ConverterPalette.muted)
+
+            Button {
+                Task { await loadCatalog() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(ConverterPalette.blue)
+                    .frame(width: 42, height: 42)
+                    .background(ConverterPalette.panel)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isLoading)
         }
     }
 
-    @ViewBuilder
-    private func skinRow(_ skin: IshaCatalogSkin, heroName: String) -> some View {
-        HStack(spacing: 10) {
-            IshaCatalogRemoteImage(urlString: skin.image)
-                .frame(width: 52, height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(skin.skin_name ?? "Custom Skin")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(ConverterPalette.text)
-                    .lineLimit(2)
-                if skin.featured == true {
-                    Text("FEATURED")
-                        .font(.system(size: 9, weight: .bold))
+    private var heroBanner: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            HStack {
+                HStack(spacing: 6) {
+                    Circle().fill(ConverterPalette.green).frame(width: 6, height: 6)
+                    Text("LIVE SKIN CATALOG")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .tracking(1)
                         .foregroundColor(ConverterPalette.green)
                 }
-                if let tags = skin.tags, !tags.isEmpty {
-                    Text(tags.map(\.name).filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(.system(size: 9))
+                Spacer()
+                Image(systemName: "sparkles")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(.white.opacity(0.75))
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Find your next")
+                    .font(.system(size: 25, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                Text("favorite skin.")
+                    .font(.system(size: 25, weight: .bold, design: .rounded))
+                    .foregroundColor(ConverterPalette.green)
+                Text("Browse, search, tag and save script-skin archives.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.72))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 0) {
+                metric(value: "\(downloadableCount)", label: "DOWNLOADS")
+                Rectangle().fill(.white.opacity(0.18)).frame(width: 1, height: 30)
+                metric(value: "\(heroes.count)", label: "HEROES")
+                Rectangle().fill(.white.opacity(0.18)).frame(width: 1, height: 30)
+                metric(value: "\(recentDownloads.count)", label: "SAVED")
+            }
+            .padding(.top, 2)
+        }
+        .padding(19)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.12, green: 0.24, blue: 0.38),
+                    Color(red: 0.10, green: 0.18, blue: 0.28),
+                    ConverterPalette.panel
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(ConverterPalette.blue.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func metric(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+            Text(label)
+                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .tracking(0.7)
+                .foregroundColor(.white.opacity(0.60))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var searchPanel: some View {
+        HStack(spacing: 11) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(ConverterPalette.blue)
+
+            TextField("Search hero, skin name or tag…", text: $searchText)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(ConverterPalette.text)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .submitLabel(.search)
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
                         .foregroundColor(ConverterPalette.muted)
-                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 15)
+        .frame(height: 52)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .stroke(ConverterPalette.blue.opacity(0.28), lineWidth: 1)
+        )
+    }
+
+    private var roleFilters: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("HERO ROLE")
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .tracking(1)
+                .foregroundColor(ConverterPalette.muted)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
+                    ForEach(roles, id: \.self) { role in
+                        filterChip(role, selected: selectedRole == role) {
+                            selectedRole = role
+                            selectedTag = "All"
+                        }
+                    }
                 }
             }
 
-            Spacer(minLength: 2)
-
-            Button {
-                Task { await download(skin, heroName: heroName) }
-            } label: {
-                if downloadingIDs.contains(skin.stableID) {
-                    ProgressView()
-                        .tint(.white)
-                        .frame(width: 66, height: 34)
-                } else {
-                    Label("Download", systemImage: "arrow.down.to.line")
-                        .font(.system(size: 10, weight: .bold))
-                        .labelStyle(.titleOnly)
-                        .foregroundColor(.white)
-                        .frame(width: 66, height: 34)
-                        .background(ConverterPalette.blue)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            HStack(spacing: 8) {
+                Button {
+                    featuredOnly.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: featuredOnly ? "star.fill" : "star")
+                        Text("Featured")
+                        Text("\(featuredCount)")
+                            .opacity(0.7)
+                    }
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(featuredOnly ? ConverterPalette.background : ConverterPalette.text)
+                    .padding(.horizontal, 12)
+                    .frame(height: 34)
+                    .background(featuredOnly ? ConverterPalette.green : ConverterPalette.panel)
+                    .clipShape(Capsule())
                 }
+                .buttonStyle(.plain)
+
+                if selectedTag != "All" {
+                    Button {
+                        selectedTag = "All"
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "tag.fill")
+                            Text(selectedTag)
+                            Image(systemName: "xmark")
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(ConverterPalette.blue)
+                        .padding(.horizontal, 11)
+                        .frame(height: 34)
+                        .background(ConverterPalette.blue.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if availableTags.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(availableTags.prefix(45), id: \.self) { tag in
+                            Button {
+                                selectedTag = tag
+                            } label: {
+                                Text(tag == "All" ? "All tags" : "#\(tag)")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(selectedTag == tag ? .white : ConverterPalette.muted)
+                                    .padding(.horizontal, 9)
+                                    .frame(height: 27)
+                                    .background(selectedTag == tag ? ConverterPalette.blue.opacity(0.35) : ConverterPalette.panel)
+                                    .clipShape(Capsule())
+                                    .overlay(Capsule().stroke(
+                                        selectedTag == tag ? ConverterPalette.blue.opacity(0.65) : .clear,
+                                        lineWidth: 1
+                                    ))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func filterChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundColor(selected ? ConverterPalette.background : ConverterPalette.muted)
+                .padding(.horizontal, 14)
+                .frame(height: 35)
+                .background(selected ? ConverterPalette.green : ConverterPalette.panel)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: 11) {
+            ProgressView().tint(ConverterPalette.blue).scaleEffect(1.15)
+            Text("Loading skin library…")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(ConverterPalette.muted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 38)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func errorState(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Label("Catalog unavailable", systemImage: "wifi.exclamationmark")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(ConverterPalette.text)
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundColor(ConverterPalette.muted)
+            Button {
+                Task { await loadCatalog() }
+            } label: {
+                Label("Try again", systemImage: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 13)
+                    .frame(height: 35)
+                    .background(ConverterPalette.blue)
+                    .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            .disabled(downloadingIDs.contains(skin.stableID))
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 9) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 28, weight: .light))
+                .foregroundColor(ConverterPalette.muted)
+            Text("No matching skins")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundColor(ConverterPalette.text)
+            Text("Try another hero, role or tag.")
+                .font(.system(size: 11))
+                .foregroundColor(ConverterPalette.muted)
+            Button("Clear filters") {
+                searchText = ""
+                selectedRole = "All"
+                selectedTag = "All"
+                featuredOnly = false
+            }
+            .font(.system(size: 11, weight: .bold))
+            .foregroundColor(ConverterPalette.blue)
+            .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 34)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func heroSection(_ group: IshaCatalogHeroGroup) -> some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 10) {
+                IshaCatalogRemoteImage(urlString: group.skins.first?.image)
+                    .frame(width: 43, height: 43)
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 11).stroke(.white.opacity(0.10), lineWidth: 1))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(group.hero.name)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(ConverterPalette.text)
+                    Text((group.hero.category ?? "Hero").capitalized + " · \(group.skins.count) available")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(ConverterPalette.muted)
+                }
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(ConverterPalette.muted)
+            }
+
+            ForEach(group.skins) { skin in
+                skinRow(skin, heroName: group.hero.name, category: group.hero.category)
+            }
+        }
+        .padding(12)
+        .background(ConverterPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 17, style: .continuous)
+                .stroke(.white.opacity(0.055), lineWidth: 1)
+        )
+    }
+
+    private func skinRow(_ skin: IshaCatalogSkin, heroName: String, category: String?) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 11) {
+                IshaCatalogRemoteImage(urlString: skin.image)
+                    .frame(width: 64, height: 72)
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 11).stroke(.white.opacity(0.10), lineWidth: 1))
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 5) {
+                        Text(skin.skin_name ?? "Custom Skin")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(ConverterPalette.text)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if skin.featured == true {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(ConverterPalette.green)
+                        }
+                    }
+
+                    Text(heroName)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(ConverterPalette.muted)
+
+                    if downloadingIDs.contains(skin.stableID) {
+                        HStack(spacing: 6) {
+                            ProgressView().tint(ConverterPalette.blue).scaleEffect(0.8)
+                            Text("Downloading archive…")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(ConverterPalette.blue)
+                        }
+                    } else {
+                        Text(validArchiveKind(skin.script)?.uppercased() ?? "ARCHIVE")
+                            .font(.system(size: 8, weight: .heavy, design: .rounded))
+                            .tracking(0.7)
+                            .foregroundColor(ConverterPalette.green)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(ConverterPalette.green.opacity(0.10))
+                            .clipShape(Capsule())
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    Task { await download(skin, heroName: heroName) }
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: downloadingIDs.contains(skin.stableID) ? "arrow.down" : "arrow.down.to.line")
+                            .font(.system(size: 13, weight: .bold))
+                        Text(downloadingIDs.contains(skin.stableID) ? "WAIT" : "SAVE")
+                            .font(.system(size: 8, weight: .heavy, design: .rounded))
+                            .tracking(0.5)
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 49, height: 50)
+                    .background(ConverterPalette.blue)
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(downloadingIDs.contains(skin.stableID))
+            }
+
+            let tags = skin.searchTags(heroName: heroName, category: category)
+            if !tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(tags, id: \.self) { tag in
+                            Text("#\(tag)")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundColor(tag.caseInsensitiveCompare("Uncategorized") == .orderedSame
+                                    ? ConverterPalette.muted : ConverterPalette.blue)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(ConverterPalette.blue.opacity(0.09))
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+            }
         }
         .padding(10)
         .background(ConverterPalette.field)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+    }
+
+    private var footer: some View {
+        VStack(spacing: 7) {
+            HStack {
+                Text("ISHA SCRIPT SKIN LIBRARY")
+                Spacer()
+                Text("DOWNLOAD ONLY")
+            }
+            .font(.system(size: 8, weight: .bold, design: .monospaced))
+            .tracking(0.5)
+            .foregroundColor(ConverterPalette.muted)
+            Text("Downloads are saved inside the app. They do not start the converter automatically.")
+                .font(.system(size: 9))
+                .foregroundColor(ConverterPalette.muted.opacity(0.8))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.top, 5)
     }
 
     @MainActor
     private func loadCatalog() async {
+        guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
+
         do {
             var request = URLRequest(url: catalogURL)
-            request.timeoutInterval = 30
+            request.timeoutInterval = 35
             request.cachePolicy = .reloadIgnoringLocalCacheData
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -1340,22 +1683,22 @@ private struct IshaScriptSkinCatalogView: View {
                 throw IshaCatalogError.invalidResponse
             }
             let decoded = try JSONDecoder().decode(IshaCatalogResponse.self, from: data)
+            guard !decoded.heroes.isEmpty else { throw IshaCatalogError.emptyCatalog }
             heroes = decoded.heroes
-            if downloadableCount == 0 {
-                throw IshaCatalogError.emptyCatalog
-            }
             errorMessage = nil
         } catch {
-            errorMessage = "Hindi ma-load ang script-skin catalog. Check internet connection and try again. (\(error.localizedDescription))"
+            errorMessage = "Hindi ma-load ang catalog. Check internet connection. (\(error.localizedDescription))"
         }
     }
 
     @MainActor
     private func download(_ skin: IshaCatalogSkin, heroName: String) async {
-        guard let address = skin.script,
+        guard !downloadingIDs.contains(skin.stableID),
+              let address = skin.script,
               let url = URL(string: address),
-              url.scheme?.lowercased() == "https" else {
-            errorMessage = "Invalid download link for this skin."
+              url.scheme?.lowercased() == "https",
+              let fileExtension = validArchiveKind(address) else {
+            errorMessage = "Invalid or unsupported archive link."
             return
         }
 
@@ -1367,10 +1710,6 @@ private struct IshaScriptSkinCatalogView: View {
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 throw IshaCatalogError.invalidResponse
             }
-            let fileExtension = url.pathExtension.lowercased()
-            guard fileExtension == "zip" || fileExtension == "rar" else {
-                throw IshaCatalogError.unsupportedArchive
-            }
             let attributes = try FileManager.default.attributesOfItem(atPath: temporaryURL.path)
             let fileSize = (attributes[.size] as? NSNumber)?.int64Value ?? 0
             guard fileSize > 0, fileSize <= 2_000_000_000 else {
@@ -1378,12 +1717,12 @@ private struct IshaScriptSkinCatalogView: View {
             }
 
             let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let downloadFolder = documents.appendingPathComponent("Script Skin Downloads", isDirectory: true)
-            try FileManager.default.createDirectory(at: downloadFolder, withIntermediateDirectories: true)
+            let folder = documents.appendingPathComponent("Script Skin Downloads", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
-            let cleanHero = safeFileName(heroName)
-            let cleanSkin = safeFileName(skin.skin_name ?? "Skin")
-            let destination = downloadFolder.appendingPathComponent("\(cleanHero) - \(cleanSkin).\(fileExtension)")
+            let destination = folder.appendingPathComponent(
+                "\(safeFileName(heroName)) - \(safeFileName(skin.skin_name ?? "Skin")).\(fileExtension)"
+            )
             if FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.removeItem(at: destination)
             }
@@ -1392,10 +1731,10 @@ private struct IshaScriptSkinCatalogView: View {
             var history = recentDownloads
             history.removeAll { $0 == destination.lastPathComponent }
             history.insert(destination.lastPathComponent, at: 0)
-            if history.count > 20 { history = Array(history.prefix(20)) }
-            if let data = try? JSONEncoder().encode(history),
-               let text = String(data: data, encoding: .utf8) {
-                historyJSON = text
+            history = Array(history.prefix(30))
+            if let historyData = try? JSONEncoder().encode(history),
+               let historyText = String(data: historyData, encoding: .utf8) {
+                historyJSON = historyText
             }
 
             shareURL = destination
@@ -1409,6 +1748,12 @@ private struct IshaScriptSkinCatalogView: View {
     private func validDownloadURL(_ value: String?) -> Bool {
         guard let value, let url = URL(string: value) else { return false }
         return url.scheme?.lowercased() == "https"
+    }
+
+    private func validArchiveKind(_ value: String?) -> String? {
+        guard let value, let url = URL(string: value), url.scheme?.lowercased() == "https" else { return nil }
+        let ext = url.pathExtension.lowercased()
+        return (ext == "zip" || ext == "rar") ? ext : nil
     }
 
     private func safeFileName(_ value: String) -> String {
@@ -1452,6 +1797,38 @@ private struct IshaCatalogSkin: Decodable, Identifiable {
     }
 
     var id: String { stableID }
+
+    func searchTags(heroName: String, category: String?) -> [String] {
+        var result: [String] = []
+
+        func appendUnique(_ value: String) {
+            let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty,
+                  !result.contains(where: { $0.caseInsensitiveCompare(cleaned) == .orderedSame }) else { return }
+            result.append(cleaned)
+        }
+
+        // Every entry receives generated hero and role tags even when its source
+        // record has no manually assigned skin tags.
+        appendUnique(heroName)
+        appendUnique(category?.capitalized ?? "Uncategorized")
+
+        let sourceTags = (tags ?? []).map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        for tag in sourceTags where !tag.isEmpty {
+            if tag.caseInsensitiveCompare(heroName) != .orderedSame &&
+               tag.caseInsensitiveCompare(category ?? "") != .orderedSame {
+                appendUnique(tag.capitalized)
+            }
+        }
+
+        if sourceTags.filter({ !$0.isEmpty }).isEmpty {
+            appendUnique("Uncategorized")
+        }
+        if featured == true {
+            appendUnique("Featured")
+        }
+        return result
+    }
 }
 
 private struct IshaCatalogTag: Decodable {
@@ -1466,16 +1843,14 @@ private struct IshaCatalogHeroGroup: Identifiable {
 
 private enum IshaCatalogError: LocalizedError {
     case invalidResponse
-    case unsupportedArchive
     case invalidArchiveSize
     case emptyCatalog
 
     var errorDescription: String? {
         switch self {
-        case .invalidResponse: return "The catalog server returned an invalid response."
-        case .unsupportedArchive: return "Only ZIP and RAR skin archives are supported."
+        case .invalidResponse: return "The catalog or download server returned an invalid response."
         case .invalidArchiveSize: return "The downloaded archive is empty or exceeds the 2 GB safety limit."
-        case .emptyCatalog: return "The catalog contains no downloadable skins."
+        case .emptyCatalog: return "The catalog contains no heroes."
         }
     }
 }
@@ -1489,15 +1864,19 @@ private struct IshaCatalogRemoteImage: View {
             case .success(let image):
                 image.resizable().scaledToFill()
             case .failure, .empty:
-                Image(systemName: "person.crop.square")
-                    .resizable()
-                    .scaledToFit()
-                    .padding(10)
-                    .foregroundColor(ConverterPalette.muted)
+                ZStack {
+                    ConverterPalette.field
+                    Image(systemName: "person.crop.square")
+                        .resizable()
+                        .scaledToFit()
+                        .padding(11)
+                        .foregroundColor(ConverterPalette.muted)
+                }
             @unknown default:
-                Color.secondary.opacity(0.12)
+                ConverterPalette.field
             }
         }
         .background(ConverterPalette.field)
+        .clipped()
     }
 }
