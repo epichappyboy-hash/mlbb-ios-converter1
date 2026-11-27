@@ -1,7 +1,7 @@
 name: Build MLBB Converter ASTC Update
 on:
   push:
-    branches: [main, feature/astc-texture-quality, codex/fix-material-lighting]
+    branches: [main, feature/astc-texture-quality, codex/fix-material-lighting, feature/game-look-editor-ios]
   workflow_dispatch:
 jobs:
   build:
