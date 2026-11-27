@@ -1048,9 +1048,7 @@ private struct IshaScriptSkinCatalogView: View {
     @AppStorage("isha.catalog.download.history") private var historyJSON = "[]"
     @AppStorage("isha.catalog.skin.tag.assignments.v1") private var skinTagAssignmentsJSON = "{}"
 
-    @State private var tagEditingTarget: IshaCatalogTagEditTarget?
-    @State private var tagInfoTarget: IshaCatalogTagInfoTarget?
-    @State private var showMultiReplaceLibrary = false
+    @State private var activeCatalogSheet: IshaCatalogSheet?
     @State private var heroes: [IshaCatalogHero] = []
     @State private var tagLibraryCache: [IshaCatalogTag] = []
     @State private var tagByIDCache: [String: IshaCatalogTag] = [:]
@@ -1067,8 +1065,6 @@ private struct IshaScriptSkinCatalogView: View {
     @State private var downloadingIDs: Set<String> = []
     @State private var convertingIDs: Set<String> = []
     @State private var isProcessingDownload = false
-    @State private var shareURL: URL?
-    @State private var showShareSheet = false
     @State private var errorMessage: String?
     @State private var statusMessage: String?
 
@@ -1341,34 +1337,32 @@ private struct IshaScriptSkinCatalogView: View {
         } message: {
             Text(statusMessage ?? "")
         }
-        .sheet(isPresented: $showShareSheet) {
-            if let shareURL {
-                ActivityView(activityItems: [shareURL])
+        .sheet(item: $activeCatalogSheet) { route in
+            switch route {
+            case .tagEditor(let target):
+                IshaSkinTagPickerView(
+                    skinName: target.skin.skin_name ?? "Custom Skin",
+                    heroName: target.heroName,
+                    tags: tagLibrary,
+                    initialSelection: selectedTagIDs(for: target.skin),
+                    onCancel: { activeCatalogSheet = nil },
+                    onSave: { ids in
+                        saveTagAssignments(ids, for: target.skin)
+                        activeCatalogSheet = nil
+                    }
+                )
+            case .tagInfo(let target):
+                IshaSkinTagInfoSheet(
+                    tag: target.tag,
+                    heroName: target.heroName,
+                    skinName: target.skinName,
+                    skinImage: target.skinImage
+                )
+            case .multiReplace:
+                IshaMultiReplaceLibraryView()
+            case .share(let url):
+                ActivityView(activityItems: [url])
             }
-        }
-        .sheet(item: $tagEditingTarget) { target in
-            IshaSkinTagPickerView(
-                skinName: target.skin.skin_name ?? "Custom Skin",
-                heroName: target.heroName,
-                tags: tagLibrary,
-                initialSelection: selectedTagIDs(for: target.skin),
-                onCancel: { tagEditingTarget = nil },
-                onSave: { ids in
-                    saveTagAssignments(ids, for: target.skin)
-                    tagEditingTarget = nil
-                }
-            )
-        }
-        .sheet(item: $tagInfoTarget) { target in
-            IshaSkinTagInfoSheet(
-                tag: target.tag,
-                heroName: target.heroName,
-                skinName: target.skinName,
-                skinImage: target.skinImage
-            )
-        }
-        .sheet(isPresented: $showMultiReplaceLibrary) {
-            IshaMultiReplaceLibraryView()
         }
     }
 
@@ -1398,7 +1392,7 @@ private struct IshaScriptSkinCatalogView: View {
             Spacer()
 
             Button {
-                showMultiReplaceLibrary = true
+                activeCatalogSheet = .multiReplace
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "square.stack.3d.up.fill")
@@ -1755,11 +1749,13 @@ private struct IshaScriptSkinCatalogView: View {
                         IshaSkinTagBadgeStack(
                             tags: visibleSkinTags(for: skin, heroName: heroName, category: category),
                             onTap: { tag in
-                                tagInfoTarget = IshaCatalogTagInfoTarget(
-                                    tag: tag,
-                                    heroName: heroName,
-                                    skinName: skin.skin_name ?? "Custom Skin",
-                                    skinImage: skin.image
+                                activeCatalogSheet = .tagInfo(
+                                    IshaCatalogTagInfoTarget(
+                                        tag: tag,
+                                        heroName: heroName,
+                                        skinName: skin.skin_name ?? "Custom Skin",
+                                        skinImage: skin.image
+                                    )
                                 )
                             }
                         )
@@ -1770,10 +1766,12 @@ private struct IshaScriptSkinCatalogView: View {
                         .foregroundColor(ConverterPalette.muted)
 
                     Button {
-                        tagEditingTarget = IshaCatalogTagEditTarget(
-                            skin: skin,
-                            heroName: heroName,
-                            category: category
+                        activeCatalogSheet = .tagEditor(
+                            IshaCatalogTagEditTarget(
+                                skin: skin,
+                                heroName: heroName,
+                                category: category
+                            )
                         )
                     } label: {
                         HStack(spacing: 5) {
@@ -1951,8 +1949,7 @@ private struct IshaScriptSkinCatalogView: View {
                     historyJSON = historyText
                 }
 
-                shareURL = convertedURL
-                showShareSheet = true
+                activeCatalogSheet = .share(convertedURL)
                 statusMessage = "Tapos na: na-download at awtomatikong na-convert ang \(skin.skin_name ?? "skin") para sa iOS. Ang converted ZIP ang nakahandang i-save o i-share."
             case .failure(let conversionError):
                 errorMessage = "Na-download ang \(skin.skin_name ?? "skin"), pero nabigo ang automatic iOS conversion. Nananatili ang original archive sa Script Skin Downloads. Error: \(conversionError.localizedDescription)"
@@ -2143,6 +2140,22 @@ private struct IshaCatalogTagEditTarget: Identifiable {
     let heroName: String
     let category: String?
     var id: String { skin.stableID }
+}
+
+private enum IshaCatalogSheet: Identifiable {
+    case tagEditor(IshaCatalogTagEditTarget)
+    case tagInfo(IshaCatalogTagInfoTarget)
+    case multiReplace
+    case share(URL)
+
+    var id: String {
+        switch self {
+        case .tagEditor(let target): return "tag-editor|\(target.id)"
+        case .tagInfo(let target): return "tag-info|\(target.id)"
+        case .multiReplace: return "multi-replace"
+        case .share(let url): return "share|\(url.lastPathComponent)"
+        }
+    }
 }
 
 private struct IshaCatalogTagInfoTarget: Identifiable {
