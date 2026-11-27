@@ -12,6 +12,60 @@ jobs:
         run: |
           cat MLBB_iOS_Converter_Project.zip.part* > MLBB_iOS_Converter_Project.zip
           unzip -q MLBB_iOS_Converter_Project.zip -d reconstructed
+      - name: Apply uploaded ISHA shader bundle to embedded iOS shader resources
+        run: |
+          set -euo pipefail
+          source_zip="shader new (1).zip"
+          target_dir="reconstructed/MLBB_iOS_Converter/app/ios_shaders"
+          if [ ! -f "$source_zip" ]; then
+            echo "::warning::The new shader ZIP is not yet in the repository root. The existing embedded shader files will be kept for this build."
+            echo "Upload the file named 'shader new (1).zip' to the repository root to replace the three built-in iOS shader bundles on the next build."
+            exit 0
+          fi
+
+          mkdir -p "$target_dir"
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          archive_path = Path("shader new (1).zip")
+          target = Path("reconstructed/MLBB_iOS_Converter/app/ios_shaders")
+          required = (
+              "ShaderVariants.unity3d",
+              "ShaderVariantsInBattle.unity3d",
+              "ShaderVariants_add.unity3d",
+          )
+
+          with zipfile.ZipFile(archive_path) as archive:
+              selected = {}
+              for entry in archive.infolist():
+                  if entry.is_dir():
+                      continue
+                  basename = Path(entry.filename).name
+                  if basename in required:
+                      if basename in selected:
+                          raise SystemExit(f"Duplicate shader file in ZIP: {basename}")
+                      selected[basename] = entry
+              missing = [name for name in required if name not in selected]
+              if missing:
+                  raise SystemExit("Shader ZIP is missing required files: " + ", ".join(missing))
+
+              for name in required:
+                  entry = selected[name]
+                  if entry.file_size < 1024:
+                      raise SystemExit(f"Shader file is unexpectedly small: {name}")
+                  data = archive.read(entry)
+                  if not data.startswith(b"UnityFS\\0"):
+                      raise SystemExit(f"Not a UnityFS bundle: {name}")
+                  (target / name).write_bytes(data)
+                  print(f"Replaced {name}: {len(data)} bytes")
+
+          for name in required:
+              path = target / name
+              if not path.is_file() or path.stat().st_size < 1024:
+                  raise SystemExit(f"Embedded shader replacement is missing: {path}")
+          print("Verified all three uploaded UnityFS shader bundles in app/ios_shaders.")
+          PY
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project and configure Python extensions
