@@ -835,7 +835,7 @@ private struct ToolSkinLibraryView: View {
     @State private var selectedFilter: ToolSkinFilter = .all
 
     private var importedPackages: [ToolHistoryRecord] {
-        history.records.filter { $0.action == "Imported" }
+        history.records.filter { $0.action == "Imported" || $0.action == "Converted" }
     }
 
     private var visiblePackages: [ToolHistoryRecord] {
@@ -965,32 +965,42 @@ private struct ToolInstallerView: View {
     @ObservedObject var history: ToolHistoryStore
     @State private var showPicker = false
     @State private var selectedURL: URL?
+    @State private var outputURL: URL?
     @State private var showShare = false
     @State private var alertMessage: String?
+    @State private var statusMessage = "Choose an Android Unity3D bundle or ZIP package to process."
     @State private var isImporting = false
+    @State private var isConverting = false
+    @State private var selectedTextureQuality = "high"
 
-    private let supportedExtensions: Set<String> = ["zip", "rar", "7z", "unity3d"]
+    // The existing Isha converter bridge accepts Unity3D and ZIP input.
+    // RAR and 7z are intentionally not advertised as processable formats.
+    private let supportedExtensions: Set<String> = ["zip", "unity3d"]
+
+    private var documents: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 ToolInfoPanel(
-                    title: "Package Installer",
-                    message: "Import a ZIP, RAR, 7z or Unity3D file, review its basic file details, then export the local copy through the iOS share sheet."
+                    title: "Unity Asset Processor",
+                    message: "This uses the existing Isha Converter Python/UnityPy engine. Import a .unity3d bundle or ZIP, choose an ASTC quality profile, then convert and export the iOS-ready ZIP."
                 )
 
                 Button {
                     showPicker = true
                 } label: {
-                    Label(isImporting ? "Importing…" : "Choose package file", systemImage: "doc.badge.plus")
+                    Label(isImporting ? "Importing…" : "Choose Unity3D / ZIP file", systemImage: "doc.badge.plus")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isImporting)
+                .disabled(isImporting || isConverting)
 
                 if let selectedURL {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("Selected package", systemImage: "archivebox")
+                    VStack(alignment: .leading, spacing: 11) {
+                        Label("Selected asset package", systemImage: "archivebox")
                             .font(.caption.bold())
                             .foregroundColor(.secondary)
                         Text(selectedURL.lastPathComponent)
@@ -1005,27 +1015,68 @@ private struct ToolInstallerView: View {
                                 .foregroundColor(.secondary)
                         }
 
-                        Button {
-                            showShare = true
-                            history.add(fileName: selectedURL.lastPathComponent, action: "Exported", details: "Shared through the iOS share sheet. Not installed into Mobile Legends.", localPath: selectedURL.path)
-                        } label: {
-                            Label("Prepare / Export to Files", systemImage: "square.and.arrow.up")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
+                        Divider()
 
-                        Text("This action exports the package only. It does not modify Mobile Legends.")
-                            .font(.caption)
-                            .foregroundColor(.orange)
+                        Text("TEXTURE QUALITY")
+                            .font(.caption.bold())
+                            .foregroundColor(.secondary)
+                        Picker("Texture quality", selection: $selectedTextureQuality) {
+                            Text("High · ASTC 4×4").tag("high")
+                            Text("Balanced · ASTC 6×6").tag("balanced")
+                            Text("Small · ASTC 8×8").tag("small")
+                        }
+                        .pickerStyle(.segmented)
+                        .disabled(isConverting)
+
+                        Button(action: processToIOS) {
+                            HStack {
+                                if isConverting {
+                                    ProgressView().tint(.white)
+                                }
+                                Text(isConverting ? "Converting…" : "CONVERT TO iOS")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isConverting || isImporting)
+
+                        if let outputURL {
+                            Button {
+                                showShare = true
+                            } label: {
+                                Label("Export converted ZIP to Files", systemImage: "square.and.arrow.up")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isConverting)
+                            Text(outputURL.lastPathComponent)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .textSelection(.enabled)
+                        }
+
+                        Text(statusMessage)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(14)
                     .background(Color(.secondarySystemGroupedBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 15))
+                } else {
+                    Text(statusMessage)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
                 }
 
                 ToolInfoPanel(
-                    title: "iOS limitation",
-                    message: "The Android installer writes files inside the selected game folder using Android storage access. iOS apps are sandboxed separately, so this iOS port cannot directly replace MLBB resources or claim to have applied a skin."
+                    title: "What this processor does",
+                    message: "It reuses the existing converter, texture decoder, ASTC encoder, shader mapping, material-lighting fix and texture validation already in this repository. The result is saved as a converted ZIP inside Isha Converter and can be exported through Files."
+                )
+
+                ToolInfoPanel(
+                    title: "Important",
+                    message: "This processes a local copy of the files you select. It does not install or apply changes inside the Mobile Legends app."
                 )
             }
             .padding(16)
@@ -1037,9 +1088,12 @@ private struct ToolInstallerView: View {
             }
         }
         .sheet(isPresented: $showShare) {
-            if let selectedURL { ActivityView(activityItems: [selectedURL]) }
+            if let outputURL { ActivityView(activityItems: [outputURL]) }
         }
-        .alert("Installer", isPresented: Binding(get: { alertMessage != nil }, set: { if !$0 { alertMessage = nil } })) {
+        .alert("Asset Processor", isPresented: Binding(
+            get: { alertMessage != nil },
+            set: { if !$0 { alertMessage = nil } }
+        )) {
             Button("OK", role: .cancel) { alertMessage = nil }
         } message: {
             Text(alertMessage ?? "")
@@ -1049,41 +1103,113 @@ private struct ToolInstallerView: View {
     private func importFile(_ selected: URL) {
         let ext = selected.pathExtension.lowercased()
         guard supportedExtensions.contains(ext) else {
-            alertMessage = "Choose a ZIP, RAR, 7z or Unity3D package."
+            alertMessage = "The existing Isha conversion engine accepts .unity3d and .zip files. Extract RAR/7z archives to a supported format first."
             return
         }
 
         isImporting = true
+        isConverting = false
+        outputURL = nil
+        statusMessage = "Importing \(selected.lastPathComponent)…"
+
         DispatchQueue.global(qos: .userInitiated).async {
             let scoped = selected.startAccessingSecurityScopedResource()
             defer { if scoped { selected.stopAccessingSecurityScopedResource() } }
 
-            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let folder = documents.appendingPathComponent("MLBB Tools/Imported", isDirectory: true)
-            var resultURL: URL?
+            var coordinationError: NSError?
             var copyError: Error?
-            do {
-                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                let destination = folder.appendingPathComponent(UUID().uuidString + "_" + selected.lastPathComponent)
-                try FileManager.default.copyItem(at: selected, to: destination)
-                resultURL = destination
-            } catch {
-                copyError = error
+            var resultURL: URL?
+            let coordinator = NSFileCoordinator()
+
+            coordinator.coordinate(readingItemAt: selected, options: [], error: &coordinationError) { readableURL in
+                do {
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let destination = folder.appendingPathComponent(UUID().uuidString + "_" + selected.lastPathComponent)
+                    do {
+                        try FileManager.default.copyItem(at: readableURL, to: destination)
+                    } catch {
+                        try FileManager.default.copyItem(at: selected, to: destination)
+                    }
+                    resultURL = destination
+                } catch {
+                    copyError = error
+                }
             }
 
+            let failure = coordinationError ?? copyError
             DispatchQueue.main.async {
                 isImporting = false
-                if let resultURL {
-                    selectedURL = resultURL
-                    let size = (try? FileManager.default.attributesOfItem(atPath: resultURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+                if let failure {
+                    statusMessage = "Import failed."
+                    alertMessage = "Could not copy the selected file from Files. \(failure.localizedDescription)"
+                    return
+                }
+                guard let resultURL else {
+                    statusMessage = "Import failed."
+                    alertMessage = "Files did not provide a readable copy. Please select the file again."
+                    return
+                }
+
+                selectedURL = resultURL
+                let size = (try? FileManager.default.attributesOfItem(atPath: resultURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+                history.add(
+                    fileName: resultURL.lastPathComponent,
+                    action: "Imported",
+                    details: "\(ext.uppercased()) • \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) • Ready for Isha conversion.",
+                    localPath: resultURL.path
+                )
+                statusMessage = "Imported. Select a texture quality and convert."
+            }
+        }
+    }
+
+    private func processToIOS() {
+        guard let selectedURL else { return }
+        guard supportedExtensions.contains(selectedURL.pathExtension.lowercased()) else {
+            alertMessage = "Choose a .unity3d or .zip file."
+            return
+        }
+
+        isConverting = true
+        outputURL = nil
+        statusMessage = "Running the existing Isha conversion pipeline…"
+
+        let outputDirectory = documents.appendingPathComponent("MLBB Tools/Converted", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        } catch {
+            isConverting = false
+            alertMessage = "Could not create the output folder. \(error.localizedDescription)"
+            statusMessage = "Conversion could not start."
+            return
+        }
+
+        PythonConverter.shared.convert(
+            input: selectedURL,
+            outputDirectory: outputDirectory,
+            textureQuality: selectedTextureQuality
+        ) { result in
+            DispatchQueue.main.async {
+                isConverting = false
+                switch result {
+                case .success(let convertedURL):
+                    outputURL = convertedURL
+                    let qualityLabel = [
+                        "high": "High / ASTC 4×4",
+                        "balanced": "Balanced / ASTC 6×6",
+                        "small": "Small / ASTC 8×8"
+                    ][selectedTextureQuality] ?? selectedTextureQuality
+                    statusMessage = "Conversion completed. CRC and texture validation ran in the existing pipeline."
                     history.add(
-                        fileName: resultURL.lastPathComponent,
-                        action: "Imported",
-                        details: "\(ext.uppercased()) • \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) • Saved locally for export.",
-                        localPath: resultURL.path
+                        fileName: convertedURL.lastPathComponent,
+                        action: "Converted",
+                        details: "Android to iOS • \(qualityLabel) • Converted ZIP ready to export.",
+                        localPath: convertedURL.path
                     )
-                } else {
-                    alertMessage = "Could not copy the selected file. \(copyError?.localizedDescription ?? "Unknown file access error.")"
+                case .failure(let error):
+                    statusMessage = "Conversion failed. Check the diagnostic log in Documents/Converted."
+                    alertMessage = error.localizedDescription
                 }
             }
         }
