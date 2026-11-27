@@ -2629,31 +2629,54 @@ private struct IshaMultiReplaceLibraryView: View {
     }
 
     private var selectedJobs: [IshaSkinUpgradeSelection] {
-        entries.compactMap { entry in
-            guard let targetID = selectedReplacements[entry.id],
-                  let target = (entry.targets ?? []).first(where: { $0.id == targetID && validTarget($0) }) else {
-                return nil
+        var result: [IshaSkinUpgradeSelection] = []
+        for entry in entries {
+            guard let targetID = selectedReplacements[entry.id] else { continue }
+            for target in entry.targets ?? [] {
+                if target.id == targetID && validTarget(target) {
+                    result.append(IshaSkinUpgradeSelection(entry: entry, target: target))
+                    break
+                }
             }
-            return IshaSkinUpgradeSelection(entry: entry, target: target)
         }
+        return result
     }
 
     private var visibleEntries: [IshaSkinUpgradeEntry] {
         let query = appliedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return entries.filter { entry in
-            guard entry.enabled != false else { return false }
-            let validTargets = (entry.targets ?? []).filter { validTarget($0) }
-            guard !validTargets.isEmpty else { return false }
-            guard !query.isEmpty else { return true }
+        var result: [IshaSkinUpgradeEntry] = []
 
-            let searchable = [
-                entry.hero,
-                entry.base_name,
-                (entry.skin_tags ?? []).joined(separator: " "),
-                validTargets.map { $0.name + " " + ($0.type ?? "") + " " + ($0.skin_tags ?? []).joined(separator: " ") }.joined(separator: " ")
-            ].joined(separator: " ")
-            return searchable.localizedCaseInsensitiveContains(query)
+        for entry in entries {
+            guard entry.enabled != false else { continue }
+
+            var hasValidTarget = false
+            for target in entry.targets ?? [] {
+                if validTarget(target) {
+                    hasValidTarget = true
+                    break
+                }
+            }
+            guard hasValidTarget else { continue }
+
+            if query.isEmpty || matchesSearch(entry, query: query) {
+                result.append(entry)
+            }
         }
+        return result
+    }
+
+    private func matchesSearch(_ entry: IshaSkinUpgradeEntry, query: String) -> Bool {
+        var searchParts: [String] = [entry.hero, entry.base_name]
+        searchParts.append(contentsOf: entry.skin_tags ?? [])
+
+        for target in entry.targets ?? [] {
+            guard validTarget(target) else { continue }
+            searchParts.append(target.name)
+            if let type = target.type { searchParts.append(type) }
+            searchParts.append(contentsOf: target.skin_tags ?? [])
+        }
+
+        return searchParts.joined(separator: " ").localizedCaseInsensitiveContains(query)
     }
 
     var body: some View {
