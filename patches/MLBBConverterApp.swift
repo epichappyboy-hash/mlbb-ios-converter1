@@ -1212,7 +1212,6 @@ private struct IshaScriptSkinCatalogView: View {
     }
 
     @MainActor
-    @MainActor
     private func saveTagAssignments(_ ids: [String], for skin: IshaCatalogSkin) {
         var values = assignmentsCache
         let cleaned = Array(Set(ids)).sorted()
