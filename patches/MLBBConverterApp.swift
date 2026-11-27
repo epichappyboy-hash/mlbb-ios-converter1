@@ -1143,7 +1143,7 @@ private struct IshaScriptSkinCatalogView: View {
                         HStack {
                             Text("FILTERED RESULTS")
                                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                                .tracking(1)
+                                .kerning(1)
                                 .foregroundColor(ConverterPalette.muted)
                             Spacer()
                             Text("\(visibleCount) SKINS")
@@ -1154,7 +1154,7 @@ private struct IshaScriptSkinCatalogView: View {
                         HStack {
                             Text("BROWSE ALL HEROES")
                                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                                .tracking(1)
+                                .kerning(1)
                                 .foregroundColor(ConverterPalette.muted)
                             Spacer()
                             Text("\(heroes.count) HEROES")
@@ -1232,11 +1232,11 @@ private struct IshaScriptSkinCatalogView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("ISHA CONVERTER")
                     .font(.system(size: 11, weight: .heavy, design: .rounded))
-                    .tracking(1.2)
+                    .kerning(1.2)
                     .foregroundColor(ConverterPalette.text)
                 Text("SCRIPT SKIN LIBRARY")
                     .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .tracking(1)
+                    .kerning(1)
                     .foregroundColor(ConverterPalette.muted)
             }
 
@@ -1264,7 +1264,7 @@ private struct IshaScriptSkinCatalogView: View {
                     Circle().fill(ConverterPalette.green).frame(width: 6, height: 6)
                     Text("LIVE SKIN CATALOG")
                         .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .tracking(1)
+                        .kerning(1)
                         .foregroundColor(ConverterPalette.green)
                 }
                 Spacer()
@@ -1322,7 +1322,7 @@ private struct IshaScriptSkinCatalogView: View {
                 .foregroundColor(.white)
             Text(label)
                 .font(.system(size: 8, weight: .bold, design: .rounded))
-                .tracking(0.7)
+                .kerning(0.7)
                 .foregroundColor(.white.opacity(0.60))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1365,7 +1365,7 @@ private struct IshaScriptSkinCatalogView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("HERO ROLE")
                 .font(.system(size: 9, weight: .bold, design: .rounded))
-                .tracking(1)
+                .kerning(1)
                 .foregroundColor(ConverterPalette.muted)
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1596,7 +1596,7 @@ private struct IshaScriptSkinCatalogView: View {
                     } else {
                         Text(validArchiveKind(skin.script)?.uppercased() ?? "ARCHIVE")
                             .font(.system(size: 8, weight: .heavy, design: .rounded))
-                            .tracking(0.7)
+                            .kerning(0.7)
                             .foregroundColor(ConverterPalette.green)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 4)
@@ -1615,7 +1615,7 @@ private struct IshaScriptSkinCatalogView: View {
                             .font(.system(size: 13, weight: .bold))
                         Text(downloadingIDs.contains(skin.stableID) ? "WAIT" : "SAVE")
                             .font(.system(size: 8, weight: .heavy, design: .rounded))
-                            .tracking(0.5)
+                            .kerning(0.5)
                     }
                     .foregroundColor(.white)
                     .frame(width: 49, height: 50)
@@ -1657,7 +1657,7 @@ private struct IshaScriptSkinCatalogView: View {
                 Text("DOWNLOAD ONLY")
             }
             .font(.system(size: 8, weight: .bold, design: .monospaced))
-            .tracking(0.5)
+            .kerning(0.5)
             .foregroundColor(ConverterPalette.muted)
             Text("Downloads are saved inside the app. They do not start the converter automatically.")
                 .font(.system(size: 9))
