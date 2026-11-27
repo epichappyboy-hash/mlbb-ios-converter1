@@ -300,6 +300,11 @@ jobs:
           if not patched_bridge.is_file():
               raise SystemExit("Missing patches/converter_bridge.py")
           bridge.write_text(patched_bridge.read_text())
+          skin_engine = Path("../../patches/skin_package_engine.py")
+          if not skin_engine.is_file():
+              raise SystemExit("Missing patches/skin_package_engine.py")
+          import shutil
+          shutil.copy2(skin_engine, Path("app/skin_package_engine.py"))
           PY
       - name: Apply ASTC texture quality formats
         working-directory: reconstructed/MLBB_iOS_Converter
@@ -382,6 +387,13 @@ jobs:
           python3 ../../patches/texture_validation.py app/mlbb_ios_converter.py
           python3 ../../patches/test_texture_validation.py app/mlbb_ios_converter.py
           python3 -m py_compile app/mlbb_ios_converter.py app/converter_bridge.py ../../patches/high_texture_decoder.py
+      - name: Test offline Skin Package Engine
+        working-directory: reconstructed/MLBB_iOS_Converter
+        run: |
+          set -euo pipefail
+          cp ../../patches/skin_package_engine.py app/skin_package_engine.py
+          python3 ../../patches/test_skin_package_engine.py
+          python3 -m py_compile app/skin_package_engine.py app/converter_bridge.py
       - name: Build unsigned iPhone app
         working-directory: reconstructed/MLBB_iOS_Converter
         run: xcodebuild -project MLBBConverter.xcodeproj -scheme MLBBConverter -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
@@ -391,6 +403,7 @@ jobs:
           set -euo pipefail
           app="build/Build/Products/Release-iphoneos/MLBBConverter.app"
           test -f app/converter_bridge.py
+          test -f app/skin_package_engine.py
           test -f app/mlbb_ios_converter.py
           cp ../../patches/high_texture_decoder.py app/high_texture_decoder.py
           # Fetch only public skin catalog metadata. No skin artwork or replacement
@@ -464,6 +477,7 @@ jobs:
           ditto app "$app/app"
           ditto app_packages "$app/app_packages"
           test -f "$app/app/converter_bridge.py"
+          test -f "$app/app/skin_package_engine.py"
           test -f "$app/app/mlbb_ios_converter.py"
           test -f "$app/app/verified_shader_mappings.json"
           test -s "$app/app/isha_skin_catalog.json.zlib"

@@ -1282,8 +1282,12 @@ private struct ToolInstallerView: View {
     @ObservedObject private var skinSelection = ToolSkinSelectionStore.shared
     @State private var showPicker = false
     @State private var selectedURL: URL?
+    @State private var backupURL: URL?
+    @State private var restoredURL: URL?
     @State private var outputURL: URL?
     @State private var showShare = false
+    @State private var showBackupShare = false
+    @State private var showRestoredShare = false
     @State private var alertMessage: String?
     @State private var statusMessage = "Choose an Android Unity3D bundle or ZIP package to process."
     @State private var isImporting = false
@@ -1339,6 +1343,43 @@ private struct ToolInstallerView: View {
                                 .foregroundColor(.secondary)
                         }
 
+                        if let backupURL {
+                            ToolInfoPanel(
+                                title: "Offline Skin Package Engine",
+                                message: "Isha stores an original backup, verifies the package during conversion, and keeps a repairable local working copy. Restore exports the untouched original package; Reapply runs the Isha conversion again."
+                            )
+                            Button { showBackupShare = true } label: {
+                                Label("Export Original Backup", systemImage: "archivebox")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button(action: repairImportedCopy) {
+                                Label("Repair Imported Package", systemImage: "wrench.and.screwdriver")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isConverting || isImporting || !FileManager.default.fileExists(atPath: backupURL.path))
+
+                            Button(action: restoreOriginalBackup) {
+                                Label("Restore Original Package", systemImage: "arrow.uturn.backward")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isConverting || isImporting || !FileManager.default.fileExists(atPath: backupURL.path))
+
+                            if let restoredURL {
+                                Button { showRestoredShare = true } label: {
+                                    Label("Export Restored Original", systemImage: "square.and.arrow.up")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                Text(restoredURL.lastPathComponent)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
                         Divider()
 
                         Text("TEXTURE QUALITY")
@@ -1365,6 +1406,13 @@ private struct ToolInstallerView: View {
                         .disabled(isConverting || isImporting)
 
                         if let outputURL {
+                            Button(action: processToIOS) {
+                                Label("Reapply Conversion", systemImage: "arrow.clockwise")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isConverting || isImporting)
+
                             Button {
                                 showShare = true
                             } label: {
@@ -1414,6 +1462,12 @@ private struct ToolInstallerView: View {
         .sheet(isPresented: $showShare) {
             if let outputURL { ActivityView(activityItems: [outputURL]) }
         }
+        .sheet(isPresented: $showBackupShare) {
+            if let backupURL { ActivityView(activityItems: [backupURL]) }
+        }
+        .sheet(isPresented: $showRestoredShare) {
+            if let restoredURL { ActivityView(activityItems: [restoredURL]) }
+        }
         .alert("Asset Processor", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } }
@@ -1444,6 +1498,7 @@ private struct ToolInstallerView: View {
             var coordinationError: NSError?
             var copyError: Error?
             var resultURL: URL?
+            var backupResultURL: URL?
             let coordinator = NSFileCoordinator()
 
             coordinator.coordinate(readingItemAt: selected, options: [], error: &coordinationError) { readableURL in
@@ -1455,7 +1510,12 @@ private struct ToolInstallerView: View {
                     } catch {
                         try FileManager.default.copyItem(at: selected, to: destination)
                     }
+                    let backupFolder = documents.appendingPathComponent("MLBB Tools/Backups", isDirectory: true)
+                    try FileManager.default.createDirectory(at: backupFolder, withIntermediateDirectories: true)
+                    let backup = backupFolder.appendingPathComponent(UUID().uuidString + "_" + selected.lastPathComponent)
+                    try FileManager.default.copyItem(at: destination, to: backup)
                     resultURL = destination
+                    backupResultURL = backup
                 } catch {
                     copyError = error
                 }
@@ -1476,15 +1536,65 @@ private struct ToolInstallerView: View {
                 }
 
                 selectedURL = resultURL
+                backupURL = backupResultURL
+                restoredURL = nil
                 let size = (try? FileManager.default.attributesOfItem(atPath: resultURL.path)[.size] as? NSNumber)?.int64Value ?? 0
                 history.add(
                     fileName: resultURL.lastPathComponent,
                     action: "Imported",
-                    details: "\(ext.uppercased()) • \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) • Ready for Isha conversion.",
+                    details: "\(ext.uppercased()) • \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) • Original backup saved; ready for package inspection and conversion.",
                     localPath: resultURL.path
                 )
-                statusMessage = "Imported. Select a texture quality and convert."
+                statusMessage = "Imported. Original backup saved. Convert to inspect, validate and process the Unity resources."
             }
+        }
+    }
+
+    private func repairImportedCopy() {
+        guard let selectedURL, let backupURL,
+              FileManager.default.fileExists(atPath: backupURL.path) else {
+            alertMessage = "The original package backup is unavailable. Import the original file again."
+            return
+        }
+        do {
+            let temporary = selectedURL.deletingLastPathComponent()
+                .appendingPathComponent(UUID().uuidString + ".repairing")
+            try FileManager.default.copyItem(at: backupURL, to: temporary)
+            try FileManager.default.removeItem(at: selectedURL)
+            try FileManager.default.moveItem(at: temporary, to: selectedURL)
+            statusMessage = "Imported copy repaired from the preserved original backup."
+            history.add(
+                fileName: selectedURL.lastPathComponent,
+                action: "Repaired",
+                details: "Local imported package restored from its original backup.",
+                localPath: selectedURL.path
+            )
+        } catch {
+            alertMessage = "Could not repair the imported copy. \(error.localizedDescription)"
+        }
+    }
+
+    private func restoreOriginalBackup() {
+        guard let backupURL, FileManager.default.fileExists(atPath: backupURL.path) else {
+            alertMessage = "The original backup is unavailable."
+            return
+        }
+        do {
+            let folder = documents.appendingPathComponent("MLBB Tools/Restored", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let destination = folder.appendingPathComponent("Restored_" + UUID().uuidString + "_" + backupURL.lastPathComponent)
+            try FileManager.default.copyItem(at: backupURL, to: destination)
+            restoredURL = destination
+            showRestoredShare = true
+            statusMessage = "Original package restored to Isha's local export folder."
+            history.add(
+                fileName: destination.lastPathComponent,
+                action: "Restored",
+                details: "Untouched original package copied from its preserved import backup.",
+                localPath: destination.path
+            )
+        } catch {
+            alertMessage = "Could not restore the original backup. \(error.localizedDescription)"
         }
     }
 

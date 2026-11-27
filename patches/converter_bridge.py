@@ -128,9 +128,15 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
     logs, capture = [], io.StringIO()
     output_dir = output_zip = None
     high_texture_dispatcher = None
+    package_operation = None
     try:
         parent = Path(output_path)
         parent.mkdir(parents=True, exist_ok=True)
+        _diagnostic(parent, "Skin Package Engine: inspecting and backing up imported package")
+        from skin_package_engine import prepare_package
+        package_operation = prepare_package(input_path, parent / "SkinPackageOperations")
+        logs.append(f"Skin Package Engine: backup verified; indexed {package_operation['report']['unityBundleCount']} Unity bundle(s). Operation {package_operation['operationId']}.")
+        _diagnostic(parent, f"Skin Package Engine prepared operation {package_operation['operationId']}")
         _diagnostic(parent, "run_conversion entered; preparing user shader folder")
         try:
             _ensure_user_shader_folder()
@@ -233,6 +239,9 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
             bad = archive.testzip()
             if bad:
                 raise RuntimeError(f"Output ZIP failed CRC validation at {bad}")
+        if package_operation is not None:
+            with zipfile.ZipFile(output_zip, "a", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+                archive.writestr("isha_skin_package_report.json", json.dumps(package_operation["report"], ensure_ascii=False, indent=2))
         final_zip = _unique_zip(parent, _output_stem(display_name))
         os.replace(output_zip, final_zip)
         shutil.rmtree(output_dir, ignore_errors=True)
@@ -246,6 +255,7 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
             "ok": True,
             "output": str(final_zip),
             "convertedBundles": converter.stats.bundles,
+            "skinPackageOperation": package_operation["operationId"] if package_operation else None,
             "textureDecoder": decoder_summary,
             "logs": logs[-120:],
         })
