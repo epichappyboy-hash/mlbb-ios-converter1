@@ -19,9 +19,9 @@ struct MainTabView: View {
                     Label("Converter", systemImage: "arrow.left.arrow.right.square")
                 }
 
-            NixHubView()
+            NutCrackerToolsView()
                 .tabItem {
-                    Label("NIX HUB", systemImage: "square.grid.2x2.fill")
+                    Label("MLBB Tools", systemImage: "square.grid.2x2.fill")
                 }
         }
         .tint(.blue)
@@ -254,599 +254,1081 @@ struct ConverterView: View {
     }
 }
 
-// MARK: - NIX HUB integration
 
-private enum NixHubPage: String, CaseIterable, Identifiable {
-    case heroSkins = "Hero Skins"
-    case effects = "Effects"
-    case backgrounds = "Backgrounds"
-    case dailyRewards = "Daily Rewards"
-    case heroCatalog = "Hero & Skin Catalog"
-    case loadingIntros = "Loading Intros"
-    case removeAds = "Remove Ads"
 
-    var id: String { rawValue }
+// MARK: - NutCracker-inspired MLBB tools (native iOS implementation)
+// The Android XAPK's Android-only storage bridge is intentionally not ported.
+// iOS sandboxing does not allow a normal app to write to another app's private files.
 
-    var subtitle: String {
-        switch self {
-        case .heroSkins: return "Browse featured custom skin packages."
-        case .effects: return "Explore emotes, battle effects, trails and more."
-        case .backgrounds: return "Background catalog."
-        case .dailyRewards: return "Daily tasks and rewards."
-        case .heroCatalog: return "Search the hero reference catalog."
-        case .loadingIntros: return "Browse and export loading intro packages."
-        case .removeAds: return "Ad-free experience information."
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .heroSkins: return "person.crop.square"
-        case .effects: return "sparkles"
-        case .backgrounds: return "photo"
-        case .dailyRewards: return "gift"
-        case .heroCatalog: return "books.vertical"
-        case .loadingIntros: return "play.rectangle"
-        case .removeAds: return "rectangle.slash"
-        }
-    }
-}
-
-private struct NixHubPackage: Identifiable {
-    let id: String
-    let title: String
-    let subtitle: String
-    let imageURL: String
-    let downloadURL: String
-    let fileName: String
-}
-
-private struct NixHubEffectCategory: Identifiable {
-    let id: String
-    let title: String
-    let count: Int
-    let samples: [String]
-}
-
-private struct NixHubHero: Identifiable {
+private struct ToolHero: Identifiable, Hashable {
     let id: Int
     let name: String
     let role: String
     let lane: String
 }
 
-struct NixHubView: View {
-    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+private enum ToolCatalog {
+    static let heroes: [ToolHero] = [
+
+        ToolHero(id: 1, name: "Miya", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 2, name: "Balmond", role: "Fighter", lane: "Jungle"),
+        ToolHero(id: 3, name: "Saber", role: "Assassin", lane: "Jungle/Roaming"),
+        ToolHero(id: 4, name: "Alice", role: "Mage/Tank", lane: "EXP Lane/Jungle"),
+        ToolHero(id: 5, name: "Nana", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 6, name: "Tigreal", role: "Tank", lane: "Roaming"),
+        ToolHero(id: 7, name: "Alucard", role: "Fighter/Assassin", lane: "Jungle"),
+        ToolHero(id: 8, name: "Karina", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 9, name: "Akai", role: "Tank", lane: "Roaming/Jungle"),
+        ToolHero(id: 10, name: "Franco", role: "Tank", lane: "Roaming"),
+        ToolHero(id: 11, name: "Bane", role: "Fighter/Mage", lane: "Jungle/EXP Lane"),
+        ToolHero(id: 12, name: "Bruno", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 13, name: "Clint", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 14, name: "Rafaela", role: "Support", lane: "Roaming"),
+        ToolHero(id: 15, name: "Eudora", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 16, name: "Zilong", role: "Fighter/Assassin", lane: "EXP Lane"),
+        ToolHero(id: 17, name: "Fanny", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 18, name: "Layla", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 19, name: "Minotaur", role: "Tank/Support", lane: "Roaming"),
+        ToolHero(id: 20, name: "Lolita", role: "Support/Tank", lane: "Roaming"),
+        ToolHero(id: 21, name: "Hayabusa", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 22, name: "Freya", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 23, name: "Gord", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 24, name: "Natalia", role: "Assassin", lane: "Roaming"),
+        ToolHero(id: 25, name: "Kagura", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 26, name: "Chou", role: "Fighter", lane: "EXP Lane/Roaming"),
+        ToolHero(id: 27, name: "Sun", role: "Fighter", lane: "EXP Lane/Jungle"),
+        ToolHero(id: 28, name: "Alpha", role: "Fighter", lane: "Jungle/EXP Lane"),
+        ToolHero(id: 29, name: "Ruby", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 30, name: "Yi Sun-shin", role: "Assassin/Marksman", lane: "Jungle/Gold Lane"),
+        ToolHero(id: 31, name: "Moskov", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 32, name: "Johnson", role: "Tank/Support", lane: "Roaming"),
+        ToolHero(id: 33, name: "Cyclops", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 34, name: "Estes", role: "Support", lane: "Roaming"),
+        ToolHero(id: 35, name: "Hilda", role: "Fighter/Tank", lane: "Roaming/EXP Lane"),
+        ToolHero(id: 36, name: "Aurora", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 37, name: "Lapu-Lapu", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 38, name: "Vexana", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 39, name: "Roger", role: "Fighter/Marksman", lane: "Jungle"),
+        ToolHero(id: 40, name: "Karrie", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 41, name: "Gatotkaca", role: "Tank/Fighter", lane: "Roaming/EXP Lane"),
+        ToolHero(id: 42, name: "Harley", role: "Assassin/Mage", lane: "Jungle"),
+        ToolHero(id: 43, name: "Irithel", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 44, name: "Grock", role: "Tank/Fighter", lane: "Roaming"),
+        ToolHero(id: 45, name: "Argus", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 46, name: "Odette", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 47, name: "Lancelot", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 48, name: "Diggie", role: "Support", lane: "Roaming"),
+        ToolHero(id: 49, name: "Hylos", role: "Tank", lane: "Roaming"),
+        ToolHero(id: 50, name: "Zhask", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 51, name: "Helcurt", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 52, name: "Pharsa", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 53, name: "Lesley", role: "Marksman/Assassin", lane: "Gold Lane"),
+        ToolHero(id: 54, name: "Jawhead", role: "Fighter", lane: "EXP Lane/Jungle"),
+        ToolHero(id: 55, name: "Angela", role: "Support", lane: "Roaming"),
+        ToolHero(id: 56, name: "Gusion", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 57, name: "Valir", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 58, name: "Martis", role: "Fighter", lane: "Jungle"),
+        ToolHero(id: 59, name: "Uranus", role: "Tank", lane: "EXP Lane"),
+        ToolHero(id: 60, name: "Hanabi", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 61, name: "Chang'e", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 62, name: "Kaja", role: "Support/Fighter", lane: "Roaming"),
+        ToolHero(id: 63, name: "Selena", role: "Assassin/Mage", lane: "Roaming/Mid Lane"),
+        ToolHero(id: 64, name: "Aldous", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 65, name: "Claude", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 66, name: "Vale", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 67, name: "Leomord", role: "Fighter", lane: "Jungle"),
+        ToolHero(id: 68, name: "Lunox", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 69, name: "Hanzo", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 70, name: "Belerick", role: "Tank", lane: "Roaming"),
+        ToolHero(id: 71, name: "Kimmy", role: "Marksman/Mage", lane: "Gold Lane"),
+        ToolHero(id: 72, name: "Thamuz", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 73, name: "Harith", role: "Mage", lane: "Gold Lane/Jungle"),
+        ToolHero(id: 74, name: "Minsitthar", role: "Fighter", lane: "EXP Lane/Roaming"),
+        ToolHero(id: 75, name: "Kadita", role: "Mage/Assassin", lane: "Mid Lane"),
+        ToolHero(id: 76, name: "Faramis", role: "Support/Mage", lane: "Mid Lane"),
+        ToolHero(id: 77, name: "Badang", role: "Fighter", lane: "Roaming/EXP Lane"),
+        ToolHero(id: 78, name: "Khufra", role: "Tank", lane: "Roaming"),
+        ToolHero(id: 79, name: "Granger", role: "Marksman", lane: "Jungle/Gold Lane"),
+        ToolHero(id: 80, name: "Guinevere", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 81, name: "Esmeralda", role: "Tank/Mage", lane: "EXP Lane"),
+        ToolHero(id: 82, name: "Terizla", role: "Fighter/Tank", lane: "EXP Lane"),
+        ToolHero(id: 83, name: "X.Borg", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 84, name: "Ling", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 85, name: "Dyrroth", role: "Fighter", lane: "EXP Lane/Jungle"),
+        ToolHero(id: 86, name: "Lylia", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 87, name: "Baxia", role: "Tank", lane: "Jungle"),
+        ToolHero(id: 88, name: "Masha", role: "Fighter/Tank", lane: "EXP Lane"),
+        ToolHero(id: 89, name: "Wanwan", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 90, name: "Silvanna", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 91, name: "Cecilion", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 92, name: "Carmilla", role: "Support/Tank", lane: "Roaming"),
+        ToolHero(id: 93, name: "Atlas", role: "Tank", lane: "Roaming"),
+        ToolHero(id: 94, name: "Popol and Kupa", role: "Marksman", lane: "Jungle/Gold Lane"),
+        ToolHero(id: 95, name: "Yu Zhong", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 96, name: "Luo Yi", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 97, name: "Benedetta", role: "Assassin/Fighter", lane: "EXP Lane"),
+        ToolHero(id: 98, name: "Khaleed", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 99, name: "Barats", role: "Tank/Fighter", lane: "Jungle"),
+        ToolHero(id: 100, name: "Brody", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 101, name: "Yve", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 102, name: "Mathilda", role: "Support/Assassin", lane: "Roaming"),
+        ToolHero(id: 103, name: "Paquito", role: "Fighter/Assassin", lane: "EXP Lane"),
+        ToolHero(id: 104, name: "Gloo", role: "Tank", lane: "Roaming/EXP Lane"),
+        ToolHero(id: 105, name: "Beatrix", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 106, name: "Phoveus", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 107, name: "Natan", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 108, name: "Aulus", role: "Fighter", lane: "Jungle"),
+        ToolHero(id: 109, name: "Aamon", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 110, name: "Valentina", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 111, name: "Edith", role: "Tank/Marksman", lane: "EXP Lane/Roaming"),
+        ToolHero(id: 112, name: "Floryn", role: "Support", lane: "Roaming"),
+        ToolHero(id: 113, name: "Yin", role: "Fighter/Assassin", lane: "Jungle/EXP Lane"),
+        ToolHero(id: 114, name: "Melissa", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 115, name: "Xavier", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 116, name: "Julian", role: "Assassin/Fighter", lane: "Jungle"),
+        ToolHero(id: 117, name: "Fredrinn", role: "Fighter/Tank", lane: "Jungle"),
+        ToolHero(id: 118, name: "Joy", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 119, name: "Novaria", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 120, name: "Arlott", role: "Fighter/Assassin", lane: "EXP Lane"),
+        ToolHero(id: 121, name: "Ixia", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 122, name: "Nolan", role: "Assassin", lane: "Jungle"),
+        ToolHero(id: 123, name: "Cici", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 124, name: "Chip", role: "Support/Tank", lane: "Roaming"),
+        ToolHero(id: 125, name: "Zhuxin", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 126, name: "Suyou", role: "Assassin/Fighter", lane: "Jungle/EXP Lane"),
+        ToolHero(id: 127, name: "Lukas", role: "Fighter", lane: "EXP Lane"),
+        ToolHero(id: 128, name: "Kalea", role: "Support/Fighter", lane: "Roaming"),
+        ToolHero(id: 129, name: "Zetian", role: "Mage", lane: "Mid Lane"),
+        ToolHero(id: 130, name: "Obsidia", role: "Marksman", lane: "Gold Lane"),
+        ToolHero(id: 131, name: "Sora", role: "Fighter/Assassin", lane: "EXP Lane"),
+        ToolHero(id: 132, name: "Marcel", role: "Support", lane: "Roaming"),
+        ToolHero(id: 133, name: "Hiara", role: "Assassin", lane: "Jungle")
+    ]
+}
+
+private struct ToolHistoryRecord: Identifiable, Codable {
+    var id: UUID = UUID()
+    var fileName: String
+    var action: String
+    var details: String
+    var date: Date = Date()
+    var localPath: String?
+}
+
+private final class ToolHistoryStore: ObservableObject {
+    static let shared = ToolHistoryStore()
+    @Published private(set) var records: [ToolHistoryRecord] = []
+
+    private let key = "isha.mlbbtools.history.v1"
+
+    private init() {
+        load()
+    }
+
+    func add(fileName: String, action: String, details: String, localPath: String?) {
+        records.insert(
+            ToolHistoryRecord(fileName: fileName, action: action, details: details, localPath: localPath),
+            at: 0
+        )
+        records = Array(records.prefix(100))
+        save()
+    }
+
+    func remove(_ record: ToolHistoryRecord) {
+        records.removeAll { $0.id == record.id }
+        save()
+    }
+
+    func clear() {
+        records.removeAll()
+        save()
+    }
+
+    private func load() {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let decoded = try? JSONDecoder().decode([ToolHistoryRecord].self, from: data) else {
+            records = []
+            return
+        }
+        records = decoded
+    }
+
+    private func save() {
+        guard let data = try? JSONEncoder().encode(records) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
+private enum ToolTab: String, CaseIterable {
+    case dashboard = "Home"
+    case heroes = "Heroes"
+    case skins = "Skin Library"
+    case installer = "Installer"
+    case history = "History"
+
+    var symbol: String {
+        switch self {
+        case .dashboard: return "square.grid.2x2.fill"
+        case .heroes: return "person.3.fill"
+        case .skins: return "person.crop.square"
+        case .installer: return "folder.badge.plus"
+        case .history: return "clock.arrow.circlepath"
+        }
+    }
+}
+
+struct NutCrackerToolsView: View {
+    @State private var selectedTab: ToolTab = .dashboard
+    @StateObject private var history = ToolHistoryStore.shared
 
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 10) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 14)
-                                    .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                Text("N")
-                                    .font(.system(size: 30, weight: .black, design: .rounded))
-                                    .foregroundColor(.white)
-                            }
-                            .frame(width: 54, height: 54)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("NIX HUB")
-                                    .font(.title.bold())
-                                Text("Inside Isha Converter iOS")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-
-                        Text("Browse skins, effects, hero references and downloadable packages.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+            VStack(spacing: 0) {
+                Group {
+                    switch selectedTab {
+                    case .dashboard:
+                        ToolDashboardView(history: history, selectTab: { selectedTab = $0 })
+                    case .heroes:
+                        ToolHeroesView()
+                    case .skins:
+                        ToolSkinLibraryView(history: history)
+                    case .installer:
+                        ToolInstallerView(history: history)
+                    case .history:
+                        ToolHistoryView(history: history)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
-
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(NixHubPage.allCases) { page in
-                            NavigationLink(destination: NixHubPageView(page: page)) {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Image(systemName: page.symbol)
-                                        .font(.system(size: 22, weight: .semibold))
-                                        .foregroundColor(.blue)
-                                    Text(page.rawValue)
-                                        .font(.headline)
-                                        .foregroundColor(.primary)
-                                    Text(page.subtitle)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.leading)
-                                        .lineLimit(3)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
-                                .padding(14)
-                                .background(Color(.secondarySystemGroupedBackground))
-                                .clipShape(RoundedRectangle(cornerRadius: 16))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("ABOUT THIS iOS PORT")
-                            .font(.caption.bold())
-                            .foregroundColor(.secondary)
-                        Text("Downloaded packages are saved to the app's NIX HUB Downloads folder and can be exported through the iOS share sheet. iOS apps cannot directly write into Mobile Legends' private app data.")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
-                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                HStack(spacing: 0) {
+                    ForEach(ToolTab.allCases, id: \.self) { tab in
+                        Button {
+                            selectedTab = tab
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: tab.symbol)
+                                    .font(.system(size: 18, weight: .semibold))
+                                Text(tab.rawValue)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .lineLimit(1)
+                            }
+                            .foregroundColor(selectedTab == tab ? .blue : .secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .background(Color(.secondarySystemGroupedBackground))
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
+                }
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("NIX HUB")
+            .navigationTitle(selectedTab == .dashboard ? "MLBB Tools" : selectedTab.rawValue)
             .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
 
-private struct NixHubPageView: View {
-    let page: NixHubPage
-
-    var body: some View {
-        Group {
-            switch page {
-            case .heroSkins:
-                NixHubPackageLibraryView(
-                    title: "Featured Hero Skins",
-                    subtitle: "Featured download entries included in the supplied NIX HUB XAPK.",
-                    packages: NixHubData.featuredSkins
-                )
-            case .loadingIntros:
-                NixHubPackageLibraryView(
-                    title: "Loading Intros",
-                    subtitle: "Download a package to the app's NIX HUB Downloads folder, then export it through Files.",
-                    packages: NixHubData.loadingIntros
-                )
-            case .effects:
-                NixHubEffectsView()
-            case .heroCatalog:
-                NixHubHeroCatalogView()
-            case .backgrounds:
-                NixHubInfoView(
-                    symbol: "photo",
-                    title: "Backgrounds",
-                    message: "The supplied XAPK includes a Backgrounds menu entry, but it does not include a background package index. This section is reserved until the catalog data is available."
-                )
-            case .dailyRewards:
-                NixHubInfoView(
-                    symbol: "gift",
-                    title: "Daily Rewards",
-                    message: "The supplied XAPK describes daily tasks and rewards, but does not include a reward service or claim endpoint. No fake claim action is shown in this iOS port."
-                )
-            case .removeAds:
-                NixHubInfoView(
-                    symbol: "rectangle.slash",
-                    title: "Remove Ads",
-                    message: "The supplied XAPK contains this menu entry. An iOS ad-removal purchase and restore flow has not been integrated."
-                )
-            }
-        }
-        .navigationTitle(page.rawValue)
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct NixHubPackageLibraryView: View {
-    let title: String
-    let subtitle: String
-    let packages: [NixHubPackage]
-
-    @State private var downloadingID: String?
-    @State private var downloadedURL: URL?
-    @State private var showShareSheet = false
-    @State private var alertMessage: String?
+private struct ToolDashboardView: View {
+    @ObservedObject var history: ToolHistoryStore
+    let selectTab: (ToolTab) -> Void
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(title).font(.title2.bold())
-                    Text(subtitle).font(.footnote).foregroundColor(.secondary)
-                }
-                ForEach(packages) { item in
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 12) {
-                        AsyncImage(url: URL(string: item.imageURL)) { phase in
-                            if let image = phase.image {
-                                image.resizable().scaledToFill()
-                            } else {
-                                ZStack {
-                                    Color(.tertiarySystemGroupedBackground)
-                                    Image(systemName: "photo").foregroundColor(.secondary)
-                                }
-                            }
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 15)
+                                .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            Image(systemName: "gamecontroller.fill")
+                                .font(.system(size: 25, weight: .bold))
+                                .foregroundColor(.white)
                         }
-                        .frame(width: 104, height: 88)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .frame(width: 58, height: 58)
 
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(item.title).font(.headline).lineLimit(2)
-                            Text(item.subtitle).font(.caption).foregroundColor(.secondary).lineLimit(2)
-                            Button {
-                                download(item)
-                            } label: {
-                                HStack(spacing: 6) {
-                                    if downloadingID == item.id {
-                                        ProgressView().controlSize(.small)
-                                    } else {
-                                        Image(systemName: "arrow.down.to.line")
-                                    }
-                                    Text(downloadingID == item.id ? "Downloading…" : "Download ZIP")
-                                }
-                                .font(.caption.bold())
-                            }
-                            .disabled(downloadingID != nil)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("MLBB TOOLS")
+                                .font(.title2.bold())
+                            Text("Hero guides • Skin library • Package tools")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
-                        Spacer(minLength: 0)
                     }
-                    .padding(10)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 15))
+                    Text("Browse your hero references, manage local packages and keep a record of exported files.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+
+                HStack(spacing: 10) {
+                    ToolMetricCard(title: "Heroes", value: "\(ToolCatalog.heroes.count)", symbol: "person.3.fill")
+                    ToolMetricCard(title: "Local history", value: "\(history.records.count)", symbol: "clock")
+                }
+
+                Text("TOOLS")
+                    .font(.caption.bold())
+                    .foregroundColor(.secondary)
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ToolDashboardTile(title: "Hero Guides", subtitle: "Roster and hero profiles", symbol: "person.text.rectangle") {
+                        selectTab(.heroes)
+                    }
+                    ToolDashboardTile(title: "Skin Library", subtitle: "Imported local packages", symbol: "square.grid.2x2") {
+                        selectTab(.skins)
+                    }
+                    ToolDashboardTile(title: "Installer", subtitle: "Import and export files", symbol: "folder.badge.plus") {
+                        selectTab(.installer)
+                    }
+                    ToolDashboardTile(title: "Install History", subtitle: "Recent file operations", symbol: "clock.arrow.circlepath") {
+                        selectTab(.history)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("MORE FEATURES")
+                        .font(.caption.bold())
+                        .foregroundColor(.secondary)
+                    NavigationLink(destination: ToolResplendentView()) {
+                        ToolLinkRow(title: "Resplendent Colors", subtitle: "Choose a preview color", symbol: "paintpalette.fill")
+                    }
+                    NavigationLink(destination: ToolSettingsView()) {
+                        ToolLinkRow(title: "Settings", subtitle: "Local backup and display preferences", symbol: "gearshape.fill")
+                    }
+                    NavigationLink(destination: ToolAccountSafetyView()) {
+                        ToolLinkRow(title: "Account Safety", subtitle: "iOS compatibility and safety notes", symbol: "shield.lefthalf.filled")
+                    }
+                }
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("iOS file access note", systemImage: "info.circle")
+                        .font(.subheadline.bold())
+                    Text("Packages can be imported, reviewed and exported through Files. A normal iOS app cannot directly alter Mobile Legends' private app storage, so this build does not claim to inject skins into the running game.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.blue.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             .padding(16)
         }
         .background(Color(.systemGroupedBackground))
-        .sheet(isPresented: $showShareSheet) {
-            if let downloadedURL {
-                ActivityView(activityItems: [downloadedURL])
+    }
+}
+
+private struct ToolMetricCard: View {
+    let title: String
+    let value: String
+    let symbol: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundColor(.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value).font(.title3.bold())
+                Text(title).font(.caption).foregroundColor(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private struct ToolDashboardTile: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 9) {
+                Image(systemName: symbol)
+                    .font(.title2)
+                    .foregroundColor(.blue)
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
+            .padding(14)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 15))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ToolLinkRow: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundColor(.blue)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold)).foregroundColor(.primary)
+                Text(subtitle).font(.caption).foregroundColor(.secondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right").font(.caption.bold()).foregroundColor(.secondary)
+        }
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct ToolHeroesView: View {
+    @State private var searchText = ""
+    @State private var selectedRole = "All"
+
+    private let roles = ["All", "Tank", "Fighter", "Assassin", "Mage", "Marksman", "Support"]
+
+    private var filteredHeroes: [ToolHero] {
+        ToolCatalog.heroes.filter { hero in
+            let matchesText = searchText.isEmpty ||
+                hero.name.localizedCaseInsensitiveContains(searchText) ||
+                hero.role.localizedCaseInsensitiveContains(searchText) ||
+                hero.lane.localizedCaseInsensitiveContains(searchText)
+            let matchesRole = selectedRole == "All" || hero.role.localizedCaseInsensitiveContains(selectedRole)
+            return matchesText && matchesRole
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(roles, id: \.self) { role in
+                        Button {
+                            selectedRole = role
+                        } label: {
+                            Text(role)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(selectedRole == role ? Color.blue.opacity(0.16) : Color(.secondarySystemGroupedBackground))
+                                .foregroundColor(selectedRole == role ? .blue : .secondary)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+
+            List(filteredHeroes) { hero in
+                NavigationLink(destination: ToolHeroDetailView(hero: hero)) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.blue.opacity(0.12))
+                            Text(String(hero.name.prefix(1)))
+                                .font(.headline.bold())
+                                .foregroundColor(.blue)
+                        }
+                        .frame(width: 42, height: 42)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(hero.name).font(.subheadline.weight(.semibold))
+                            Text(hero.role + " • " + hero.lane)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .searchable(text: $searchText, prompt: "Search heroes, roles or lanes")
+    }
+}
+
+private struct ToolHeroDetailView: View {
+    let hero: ToolHero
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(LinearGradient(colors: [.blue.opacity(0.8), .purple.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        Text(String(hero.name.prefix(1)))
+                            .font(.system(size: 34, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .frame(width: 74, height: 74)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(hero.name).font(.title2.bold())
+                        Text(hero.role).font(.subheadline).foregroundColor(.secondary)
+                        Text(hero.lane).font(.caption).foregroundColor(.secondary)
+                    }
+                }
+                ToolInfoPanel(title: "Hero Profile", message: "Hero reference data is available in this build. Skill descriptions, matchup percentages and combo guides require a separate current game-data source.")
+                ToolInfoPanel(title: "Skills and Combos", message: "The APK loads this information from its remote hero catalog. No complete skill/combos dataset was included in the supplied XAPK, so exact skill details are not fabricated here.")
+                ToolInfoPanel(title: "Counters and Matchups", message: "Counter and cooperation relationships are not bundled in the XAPK resources. This section is reserved for a verified hero-data source.")
+            }
+            .padding(16)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle(hero.name)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct ToolInfoPanel: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(.headline)
+            Text(message).font(.footnote).foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private enum ToolSkinFilter: String, CaseIterable {
+    case all = "All"
+    case official = "Official"
+    case anime = "Anime"
+    case custom = "Custom"
+    case backup = "Backup"
+    case preview = "Preview"
+    case replacement = "Replacement"
+}
+
+private struct ToolSkinLibraryView: View {
+    @ObservedObject var history: ToolHistoryStore
+    @State private var searchText = ""
+    @State private var selectedFilter: ToolSkinFilter = .all
+
+    private var importedPackages: [ToolHistoryRecord] {
+        history.records.filter { $0.action == "Imported" }
+    }
+
+    private var visiblePackages: [ToolHistoryRecord] {
+        guard selectedFilter == .all || selectedFilter == .custom || selectedFilter == .backup else {
+            return []
+        }
+        return importedPackages.filter { record in
+            searchText.isEmpty || record.fileName.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ToolSkinFilter.allCases, id: \.self) { filter in
+                        Button {
+                            selectedFilter = filter
+                        } label: {
+                            Text(filter.rawValue)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 8)
+                                .background(selectedFilter == filter ? Color.blue.opacity(0.16) : Color(.secondarySystemGroupedBackground))
+                                .foregroundColor(selectedFilter == filter ? .blue : .secondary)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+
+            if visiblePackages.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 38))
+                        .foregroundColor(.secondary)
+                    Text(selectedFilter == .all || selectedFilter == .custom || selectedFilter == .backup ? "No local packages yet" : "\(selectedFilter.rawValue) catalog unavailable")
+                        .font(.headline)
+                    Text("The supplied XAPK loads its live skin catalog from an external content source; it does not bundle a complete skin package library. Import your own supported package in Installer to see it here.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(26)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(visiblePackages) { record in
+                    NavigationLink(destination: ToolPackageDetailView(record: record)) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "archivebox.fill")
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                                .frame(width: 42, height: 42)
+                                .background(Color.blue.opacity(0.10))
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(record.fileName).font(.subheadline.weight(.semibold)).lineLimit(2)
+                                Text("Local import • \(record.date.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+                .listStyle(.plain)
             }
         }
-        .alert("NIX HUB", isPresented: Binding(get: { alertMessage != nil }, set: { if !$0 { alertMessage = nil } })) {
+        .searchable(text: $searchText, prompt: "Search local packages")
+    }
+}
+
+private struct ToolPackageDetailView: View {
+    let record: ToolHistoryRecord
+    @State private var showShare = false
+    @State private var alertMessage: String?
+
+    private var fileURL: URL? {
+        guard let path = record.localPath else { return nil }
+        return URL(fileURLWithPath: path)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Image(systemName: "archivebox.fill")
+                .font(.system(size: 42))
+                .foregroundColor(.blue)
+            Text(record.fileName).font(.title3.bold())
+            Text(record.details).font(.footnote).foregroundColor(.secondary)
+            Text("Imported \(record.date.formatted(date: .long, time: .shortened))")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Button {
+                guard let fileURL, FileManager.default.fileExists(atPath: fileURL.path) else {
+                    alertMessage = "The local copy is no longer available. Import the file again."
+                    return
+                }
+                showShare = true
+            } label: {
+                Label("Export package", systemImage: "square.and.arrow.up")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            Spacer()
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Package details")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showShare) {
+            if let fileURL { ActivityView(activityItems: [fileURL]) }
+        }
+        .alert("Package", isPresented: Binding(get: { alertMessage != nil }, set: { if !$0 { alertMessage = nil } })) {
+            Button("OK", role: .cancel) { alertMessage = nil }
+        } message: {
+            Text(alertMessage ?? "")
+        }
+    }
+}
+
+private struct ToolInstallerView: View {
+    @ObservedObject var history: ToolHistoryStore
+    @State private var showPicker = false
+    @State private var selectedURL: URL?
+    @State private var showShare = false
+    @State private var alertMessage: String?
+    @State private var isImporting = false
+
+    private let supportedExtensions: Set<String> = ["zip", "rar", "7z", "unity3d"]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ToolInfoPanel(
+                    title: "Package Installer",
+                    message: "Import a ZIP, RAR, 7z or Unity3D file, review its basic file details, then export the local copy through the iOS share sheet."
+                )
+
+                Button {
+                    showPicker = true
+                } label: {
+                    Label(isImporting ? "Importing…" : "Choose package file", systemImage: "doc.badge.plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isImporting)
+
+                if let selectedURL {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Selected package", systemImage: "archivebox")
+                            .font(.caption.bold())
+                            .foregroundColor(.secondary)
+                        Text(selectedURL.lastPathComponent)
+                            .font(.headline)
+                            .textSelection(.enabled)
+                        Text("Format: \(selectedURL.pathExtension.uppercased())")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if let size = try? FileManager.default.attributesOfItem(atPath: selectedURL.path)[.size] as? NSNumber {
+                            Text("Size: \(ByteCountFormatter.string(fromByteCount: size.int64Value, countStyle: .file))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Button {
+                            showShare = true
+                            history.add(fileName: selectedURL.lastPathComponent, action: "Exported", details: "Shared through the iOS share sheet. Not installed into Mobile Legends.", localPath: selectedURL.path)
+                        } label: {
+                            Label("Prepare / Export to Files", systemImage: "square.and.arrow.up")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Text("This action exports the package only. It does not modify Mobile Legends.")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                    .padding(14)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 15))
+                }
+
+                ToolInfoPanel(
+                    title: "iOS limitation",
+                    message: "The Android installer writes files inside the selected game folder using Android storage access. iOS apps are sandboxed separately, so this iOS port cannot directly replace MLBB resources or claim to have applied a skin."
+                )
+            }
+            .padding(16)
+        }
+        .background(Color(.systemGroupedBackground))
+        .sheet(isPresented: $showPicker) {
+            ToolsDocumentPicker { url in
+                importFile(url)
+            }
+        }
+        .sheet(isPresented: $showShare) {
+            if let selectedURL { ActivityView(activityItems: [selectedURL]) }
+        }
+        .alert("Installer", isPresented: Binding(get: { alertMessage != nil }, set: { if !$0 { alertMessage = nil } })) {
             Button("OK", role: .cancel) { alertMessage = nil }
         } message: {
             Text(alertMessage ?? "")
         }
     }
 
-    private func download(_ item: NixHubPackage) {
-        guard let sourceURL = URL(string: item.downloadURL) else {
-            alertMessage = "Invalid download URL."
+    private func importFile(_ selected: URL) {
+        let ext = selected.pathExtension.lowercased()
+        guard supportedExtensions.contains(ext) else {
+            alertMessage = "Choose a ZIP, RAR, 7z or Unity3D package."
             return
         }
 
-        downloadingID = item.id
-        Task {
+        isImporting = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let scoped = selected.startAccessingSecurityScopedResource()
+            defer { if scoped { selected.stopAccessingSecurityScopedResource() } }
+
+            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let folder = documents.appendingPathComponent("MLBB Tools/Imported", isDirectory: true)
+            var resultURL: URL?
+            var copyError: Error?
             do {
-                let (temporaryURL, response) = try await URLSession.shared.download(from: sourceURL)
-                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                    throw NixHubDownloadError.httpStatus(http.statusCode)
-                }
-
-                let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                let folder = documents.appendingPathComponent("NIX HUB Downloads", isDirectory: true)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-
-                let destination = folder.appendingPathComponent(item.fileName)
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.moveItem(at: temporaryURL, to: destination)
-
-                await MainActor.run {
-                    downloadedURL = destination
-                    downloadingID = nil
-                    showShareSheet = true
-                }
+                let destination = folder.appendingPathComponent(UUID().uuidString + "_" + selected.lastPathComponent)
+                try FileManager.default.copyItem(at: selected, to: destination)
+                resultURL = destination
             } catch {
-                await MainActor.run {
-                    downloadingID = nil
-                    alertMessage = "Hindi na-download ang package. \(error.localizedDescription)"
+                copyError = error
+            }
+
+            DispatchQueue.main.async {
+                isImporting = false
+                if let resultURL {
+                    selectedURL = resultURL
+                    let size = (try? FileManager.default.attributesOfItem(atPath: resultURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+                    history.add(
+                        fileName: resultURL.lastPathComponent,
+                        action: "Imported",
+                        details: "\(ext.uppercased()) • \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) • Saved locally for export.",
+                        localPath: resultURL.path
+                    )
+                } else {
+                    alertMessage = "Could not copy the selected file. \(copyError?.localizedDescription ?? "Unknown file access error.")"
                 }
             }
         }
     }
 }
 
-private enum NixHubDownloadError: LocalizedError {
-    case httpStatus(Int)
+private struct ToolsDocumentPicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
 
-    var errorDescription: String? {
-        switch self {
-        case .httpStatus(let code):
-            return "The server returned HTTP \(code)."
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onPick: (URL) -> Void
+
+        init(onPick: @escaping (URL) -> Void) {
+            self.onPick = onPick
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else { return }
+            onPick(url)
         }
     }
 }
 
-private struct NixHubEffectsView: View {
+private struct ToolHistoryView: View {
+    @ObservedObject var history: ToolHistoryStore
+    @State private var selectedRecord: ToolHistoryRecord?
+    @State private var showShare = false
+    @State private var showClearConfirmation = false
+
     var body: some View {
-        List(NixHubData.effectCategories) { category in
-            VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    Text(category.title).font(.headline)
-                    Spacer()
-                    Text("\(category.count)")
-                        .font(.caption.bold())
-                        .foregroundColor(.blue)
+        Group {
+            if history.records.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 40))
+                        .foregroundColor(.secondary)
+                    Text("No history yet").font(.headline)
+                    Text("Imported and exported package operations will appear here.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
                 }
-                Text(category.samples.joined(separator: " • "))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(history.records) { record in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(record.fileName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(2)
+                                Spacer()
+                                Text(record.action.uppercased())
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(record.action == "Exported" ? .green : .blue)
+                            }
+                            Text(record.details).font(.caption).foregroundColor(.secondary)
+                            Text(record.date.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                history.remove(record)
+                            } label: {
+                                Label("Remove history entry", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+                .listStyle(.plain)
             }
-            .padding(.vertical, 5)
         }
-        .listStyle(.insetGrouped)
-        .overlay(alignment: .top) {
-            Text("Reference catalog • 618 records")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.top, 5)
+        .navigationTitle("Install History")
+        .toolbar {
+            if !history.records.isEmpty {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Clear") { showClearConfirmation = true }
+                }
+            }
+        }
+        .confirmationDialog("Clear local history?", isPresented: $showClearConfirmation, titleVisibility: .visible) {
+            Button("Clear history", role: .destructive) { history.clear() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the history records only. Imported files in the app's Documents folder are not deleted.")
         }
     }
 }
 
-private struct NixHubHeroCatalogView: View {
-    @State private var searchText = ""
+private struct ToolResplendentView: View {
+    @State private var selectedColor = "Amber"
+    @State private var selectedSkinName = ""
 
-    private var filteredHeroes: [NixHubHero] {
-        guard !searchText.isEmpty else { return NixHubData.heroes }
-        return NixHubData.heroes.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText) ||
-            $0.role.localizedCaseInsensitiveContains(searchText) ||
-            $0.lane.localizedCaseInsensitiveContains(searchText)
-        }
-    }
+    private let colors: [(String, Color, String)] = [
+        ("Amber", Color(red: 0.95, green: 0.64, blue: 0.18), "resplendent_shard_amber"),
+        ("Aquamarine", Color(red: 0.24, green: 0.78, blue: 0.78), "resplendent_shard_aquamarine"),
+        ("Verdelite", Color(red: 0.34, green: 0.72, blue: 0.48), "resplendent_shard_verdelite"),
+        ("Vermilion", Color(red: 0.88, green: 0.27, blue: 0.22), "resplendent_shard_vermilion")
+    ]
 
     var body: some View {
-        List(filteredHeroes) { hero in
-            VStack(alignment: .leading, spacing: 3) {
-                Text(hero.name).font(.headline)
-                Text("\(hero.role) • \(hero.lane)")
-                    .font(.caption)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ToolInfoPanel(
+                    title: "Resplendent Colors",
+                    message: "The Android app's XAPK lists four shard colors. This iOS screen provides a local color preview only; applying a color to an MLBB skin requires game-file access that iOS does not expose."
+                )
+
+                Text("CHOOSE A COLOR")
+                    .font(.caption.bold())
                     .foregroundColor(.secondary)
-            }
-            .padding(.vertical, 2)
-        }
-        .listStyle(.plain)
-        .searchable(text: $searchText, prompt: "Search heroes, roles or lanes")
-        .overlay(alignment: .top) {
-            if filteredHeroes.isEmpty {
-                Text("No heroes found for \"\(searchText)\".")
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(colors, id: \.0) { item in
+                        Button {
+                            selectedColor = item.0
+                        } label: {
+                            HStack(spacing: 9) {
+                                Circle().fill(item.1).frame(width: 23, height: 23)
+                                Text(item.0).font(.subheadline.weight(.semibold))
+                                Spacer()
+                                if selectedColor == item.0 {
+                                    Image(systemName: "checkmark.circle.fill").foregroundColor(item.1)
+                                }
+                            }
+                            .padding(12)
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .overlay(RoundedRectangle(cornerRadius: 13).stroke(selectedColor == item.0 ? item.1 : Color.clear, lineWidth: 2))
+                            .clipShape(RoundedRectangle(cornerRadius: 13))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("PREVIEW").font(.caption.bold()).foregroundColor(.secondary)
+                    HStack(spacing: 12) {
+                        Circle().fill(colors.first(where: { $0.0 == selectedColor })?.1 ?? .blue).frame(width: 48, height: 48)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(selectedColor).font(.headline)
+                            Text("Selected preview color").font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+
+                Text("Skin replacement and original-slot selection will need a verified Resplendent catalog source before they can be enabled.")
                     .font(.footnote)
                     .foregroundColor(.secondary)
-                    .padding(.top, 24)
             }
+            .padding(16)
         }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Resplendent")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-private struct NixHubInfoView: View {
-    let symbol: String
-    let title: String
-    let message: String
+private struct ToolSettingsView: View {
+    @AppStorage("isha.mlbbtools.keepBackups") private var keepBackups = true
+    @AppStorage("isha.mlbbtools.keepZzpEffects") private var keepZzpEffects = true
+    @AppStorage("isha.mlbbtools.portraitMode") private var portraitMode = "Regular"
+    @AppStorage("isha.mlbbtools.restoreQuality") private var restoreQuality = "Automatic"
+    @AppStorage("isha.mlbbtools.showSkinDetails") private var showSkinDetails = true
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: symbol)
-                .font(.system(size: 42))
-                .foregroundColor(.blue)
-            Text(title).font(.title2.bold())
-            Text(message)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+        Form {
+            Section(header: Text("LOCAL FILES")) {
+                Toggle("Keep local package copies", isOn: $keepBackups)
+                Toggle("Keep zzp effect files in exported copies", isOn: $keepZzpEffects)
+            }
+
+            Section(header: Text("SKIN PRESENTATION")) {
+                Toggle("Show replacement skin details", isOn: $showSkinDetails)
+                Picker("Portrait preview", selection: $portraitMode) {
+                    Text("Regular").tag("Regular")
+                    Text("Dynamic").tag("Dynamic")
+                    Text("Full Dynamic").tag("Full Dynamic")
+                }
+            }
+
+            Section(header: Text("RESTORE PREFERENCE")) {
+                Picker("Restore quality", selection: $restoreQuality) {
+                    Text("Automatic").tag("Automatic")
+                    Text("Standard first").tag("Standard")
+                    Text("High quality first").tag("High")
+                }
+                Text("These options are saved as preferences for the iOS package workflow. They do not change the installed game because direct game-folder restoration is unavailable on iOS.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section(header: Text("UNAVAILABLE ANDROID FEATURES")) {
+                Label("Shizuku and Wireless ADB are not included.", systemImage: "info.circle")
+                Label("Special Transformation / game-manifest editing is not enabled.", systemImage: "lock.fill")
+                Label("Account Safety cannot scan other installed apps on iOS.", systemImage: "shield.lefthalf.filled")
+            }
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-private enum NixHubData {
-    static let featuredSkins = [
-        NixHubPackage(
-            id: "ken-masters",
-            title: "Ken Masters",
-            subtitle: "Chou • Featured skin package",
-            imageURL: "https://github.com/Sparkies01/Images/raw/refs/heads/main/img/Ken.png",
-            downloadURL: "https://raw.githubusercontent.com/lanz132/FIGHTER/main/264.zip",
-            fileName: "Chou - Ken Masters.zip"
-        ),
-        NixHubPackage(
-            id: "ryu",
-            title: "Ryu",
-            subtitle: "Paquito • Featured skin package",
-            imageURL: "https://raw.githubusercontent.com/Sparkies01/Images/main/cover/1000621529.png",
-            downloadURL: "https://raw.githubusercontent.com/lanz132/FIGHTER/main/267.zip",
-            fileName: "Paquito - Ryu.zip"
-        ),
-        NixHubPackage(
-            id: "guile",
-            title: "Guile",
-            subtitle: "Dyrroth • Featured skin package",
-            imageURL: "https://raw.githubusercontent.com/Sparkies01/Images/main/cover/1000621528.png",
-            downloadURL: "https://raw.githubusercontent.com/lanz132/FIGHTER/main/265.zip",
-            fileName: "Dyrroth - Guile.zip"
-        ),
-        NixHubPackage(
-            id: "chun-li",
-            title: "Chun-Li",
-            subtitle: "Guinevere • Featured skin package",
-            imageURL: "https://raw.githubusercontent.com/Sparkies01/Images/main/cover/1000621527.png",
-            downloadURL: "https://raw.githubusercontent.com/lanz132/FIGHTER/main/266.zip",
-            fileName: "Guinevere - Chun-Li.zip"
-        )
-    ]
-
-    static let loadingIntros = (1...10).map { number in
-        let padded = number == 10 ? "10" : String(format: "%02d", number)
-        let imageName = number == 10 ? "010" : padded
-        return NixHubPackage(
-            id: "intro-\(padded)",
-            title: "Loading Intro \(padded)",
-            subtitle: "Loading screen package",
-            imageURL: "https://github.com/lanz132/INTRO/raw/main/\(imageName).jpg",
-            downloadURL: "https://github.com/lanz132/LOADINGINTRO/raw/main/E\(number).zip",
-            fileName: "NIX HUB Loading Intro \(padded).zip"
-        )
+private struct ToolAccountSafetyView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.system(size: 42))
+                    .foregroundColor(.blue)
+                Text("Account Safety").font(.title2.bold())
+                Text("The Android reference checks a list of installed apps associated with account-ban risk. iOS does not allow a normal app to enumerate other installed apps, so this scan cannot be reproduced on iPhone.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                ToolInfoPanel(
+                    title: "Safe use reminder",
+                    message: "Changing game files or using unsupported modifications may violate the game's rules and can affect account access. This iOS app does not bypass game protections or modify the running game."
+                )
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Account Safety")
+        .navigationBarTitleDisplayMode(.inline)
     }
-
-    static let effectCategories = [
-        NixHubEffectCategory(id: "emote", title: "Emotes", count: 441, samples: ["Ouch!", "Oh, My Midas Touch", "Come Get Some!"]),
-        NixHubEffectCategory(id: "statue", title: "Sacred Statues", count: 52, samples: ["Classic", "Light & Dark", "Carp Windsocks Fluttering~"]),
-        NixHubEffectCategory(id: "spawn", title: "Spawn Effects", count: 39, samples: ["Cool Summer", "Classic", "Emerald Road"]),
-        NixHubEffectCategory(id: "battle", title: "Battle Effects", count: 32, samples: ["Get over here", "Time to celebrate!", "Anniversary Celebration"]),
-        NixHubEffectCategory(id: "elimination", title: "Elimination Effects", count: 25, samples: ["Classic", "K.O", "Roaming Ghost"]),
-        NixHubEffectCategory(id: "notification", title: "Notifications", count: 13, samples: ["Classic", "Shinto Shrine", "Crystal"]),
-        NixHubEffectCategory(id: "graffiti", title: "Graffiti", count: 13, samples: ["Thumbs Up", "Graffiti: Kitty", "Graffiti: Cinnamon"]),
-        NixHubEffectCategory(id: "trail", title: "Trails", count: 3, samples: ["Classic", "M3 Glorious Trail", "Fiend Haunter Exclusive Trail"])
-    ]
-
-    static let heroes: [NixHubHero] = [
-        NixHubHero(id: 1, name: "Miya", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 2, name: "Balmond", role: "Fighter", lane: "Jungle"),
-        NixHubHero(id: 3, name: "Saber", role: "Assassin", lane: "Jungle/Roaming"),
-        NixHubHero(id: 4, name: "Alice", role: "Mage/Tank", lane: "EXP Lane/Jungle"),
-        NixHubHero(id: 5, name: "Nana", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 6, name: "Tigreal", role: "Tank", lane: "Roaming"),
-        NixHubHero(id: 7, name: "Alucard", role: "Fighter/Assassin", lane: "Jungle"),
-        NixHubHero(id: 8, name: "Karina", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 9, name: "Akai", role: "Tank", lane: "Roaming/Jungle"),
-        NixHubHero(id: 10, name: "Franco", role: "Tank", lane: "Roaming"),
-        NixHubHero(id: 11, name: "Bane", role: "Fighter/Mage", lane: "Jungle/EXP Lane"),
-        NixHubHero(id: 12, name: "Bruno", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 13, name: "Clint", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 14, name: "Rafaela", role: "Support", lane: "Roaming"),
-        NixHubHero(id: 15, name: "Eudora", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 16, name: "Zilong", role: "Fighter/Assassin", lane: "EXP Lane"),
-        NixHubHero(id: 17, name: "Fanny", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 18, name: "Layla", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 19, name: "Minotaur", role: "Tank/Support", lane: "Roaming"),
-        NixHubHero(id: 20, name: "Lolita", role: "Support/Tank", lane: "Roaming"),
-        NixHubHero(id: 21, name: "Hayabusa", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 22, name: "Freya", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 23, name: "Gord", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 24, name: "Natalia", role: "Assassin", lane: "Roaming"),
-        NixHubHero(id: 25, name: "Kagura", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 26, name: "Chou", role: "Fighter", lane: "EXP Lane/Roaming"),
-        NixHubHero(id: 27, name: "Sun", role: "Fighter", lane: "EXP Lane/Jungle"),
-        NixHubHero(id: 28, name: "Alpha", role: "Fighter", lane: "Jungle/EXP Lane"),
-        NixHubHero(id: 29, name: "Ruby", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 30, name: "Yi Sun-shin", role: "Assassin/Marksman", lane: "Jungle/Gold Lane"),
-        NixHubHero(id: 31, name: "Moskov", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 32, name: "Johnson", role: "Tank/Support", lane: "Roaming"),
-        NixHubHero(id: 33, name: "Cyclops", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 34, name: "Estes", role: "Support", lane: "Roaming"),
-        NixHubHero(id: 35, name: "Hilda", role: "Fighter/Tank", lane: "Roaming/EXP Lane"),
-        NixHubHero(id: 36, name: "Aurora", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 37, name: "Lapu-Lapu", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 38, name: "Vexana", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 39, name: "Roger", role: "Fighter/Marksman", lane: "Jungle"),
-        NixHubHero(id: 40, name: "Karrie", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 41, name: "Gatotkaca", role: "Tank/Fighter", lane: "Roaming/EXP Lane"),
-        NixHubHero(id: 42, name: "Harley", role: "Assassin/Mage", lane: "Jungle"),
-        NixHubHero(id: 43, name: "Irithel", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 44, name: "Grock", role: "Tank/Fighter", lane: "Roaming"),
-        NixHubHero(id: 45, name: "Argus", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 46, name: "Odette", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 47, name: "Lancelot", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 48, name: "Diggie", role: "Support", lane: "Roaming"),
-        NixHubHero(id: 49, name: "Hylos", role: "Tank", lane: "Roaming"),
-        NixHubHero(id: 50, name: "Zhask", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 51, name: "Helcurt", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 52, name: "Pharsa", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 53, name: "Lesley", role: "Marksman/Assassin", lane: "Gold Lane"),
-        NixHubHero(id: 54, name: "Jawhead", role: "Fighter", lane: "EXP Lane/Jungle"),
-        NixHubHero(id: 55, name: "Angela", role: "Support", lane: "Roaming"),
-        NixHubHero(id: 56, name: "Gusion", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 57, name: "Valir", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 58, name: "Martis", role: "Fighter", lane: "Jungle"),
-        NixHubHero(id: 59, name: "Uranus", role: "Tank", lane: "EXP Lane"),
-        NixHubHero(id: 60, name: "Hanabi", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 61, name: "Chang'e", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 62, name: "Kaja", role: "Support/Fighter", lane: "Roaming"),
-        NixHubHero(id: 63, name: "Selena", role: "Assassin/Mage", lane: "Roaming/Mid Lane"),
-        NixHubHero(id: 64, name: "Aldous", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 65, name: "Claude", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 66, name: "Vale", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 67, name: "Leomord", role: "Fighter", lane: "Jungle"),
-        NixHubHero(id: 68, name: "Lunox", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 69, name: "Hanzo", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 70, name: "Belerick", role: "Tank", lane: "Roaming"),
-        NixHubHero(id: 71, name: "Kimmy", role: "Marksman/Mage", lane: "Gold Lane"),
-        NixHubHero(id: 72, name: "Thamuz", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 73, name: "Harith", role: "Mage", lane: "Gold Lane/Jungle"),
-        NixHubHero(id: 74, name: "Minsitthar", role: "Fighter", lane: "EXP Lane/Roaming"),
-        NixHubHero(id: 75, name: "Kadita", role: "Mage/Assassin", lane: "Mid Lane"),
-        NixHubHero(id: 76, name: "Faramis", role: "Support/Mage", lane: "Mid Lane"),
-        NixHubHero(id: 77, name: "Badang", role: "Fighter", lane: "Roaming/EXP Lane"),
-        NixHubHero(id: 78, name: "Khufra", role: "Tank", lane: "Roaming"),
-        NixHubHero(id: 79, name: "Granger", role: "Marksman", lane: "Jungle/Gold Lane"),
-        NixHubHero(id: 80, name: "Guinevere", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 81, name: "Esmeralda", role: "Tank/Mage", lane: "EXP Lane"),
-        NixHubHero(id: 82, name: "Terizla", role: "Fighter/Tank", lane: "EXP Lane"),
-        NixHubHero(id: 83, name: "X.Borg", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 84, name: "Ling", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 85, name: "Dyrroth", role: "Fighter", lane: "EXP Lane/Jungle"),
-        NixHubHero(id: 86, name: "Lylia", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 87, name: "Baxia", role: "Tank", lane: "Jungle"),
-        NixHubHero(id: 88, name: "Masha", role: "Fighter/Tank", lane: "EXP Lane"),
-        NixHubHero(id: 89, name: "Wanwan", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 90, name: "Silvanna", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 91, name: "Cecilion", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 92, name: "Carmilla", role: "Support/Tank", lane: "Roaming"),
-        NixHubHero(id: 93, name: "Atlas", role: "Tank", lane: "Roaming"),
-        NixHubHero(id: 94, name: "Popol and Kupa", role: "Marksman", lane: "Jungle/Gold Lane"),
-        NixHubHero(id: 95, name: "Yu Zhong", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 96, name: "Luo Yi", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 97, name: "Benedetta", role: "Assassin/Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 98, name: "Khaleed", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 99, name: "Barats", role: "Tank/Fighter", lane: "Jungle"),
-        NixHubHero(id: 100, name: "Brody", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 101, name: "Yve", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 102, name: "Mathilda", role: "Support/Assassin", lane: "Roaming"),
-        NixHubHero(id: 103, name: "Paquito", role: "Fighter/Assassin", lane: "EXP Lane"),
-        NixHubHero(id: 104, name: "Gloo", role: "Tank", lane: "Roaming/EXP Lane"),
-        NixHubHero(id: 105, name: "Beatrix", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 106, name: "Phoveus", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 107, name: "Natan", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 108, name: "Aulus", role: "Fighter", lane: "Jungle"),
-        NixHubHero(id: 109, name: "Aamon", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 110, name: "Valentina", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 111, name: "Edith", role: "Tank/Marksman", lane: "EXP Lane/Roaming"),
-        NixHubHero(id: 112, name: "Floryn", role: "Support", lane: "Roaming"),
-        NixHubHero(id: 113, name: "Yin", role: "Fighter/Assassin", lane: "Jungle/EXP Lane"),
-        NixHubHero(id: 114, name: "Melissa", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 115, name: "Xavier", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 116, name: "Julian", role: "Assassin/Fighter", lane: "Jungle"),
-        NixHubHero(id: 117, name: "Fredrinn", role: "Fighter/Tank", lane: "Jungle"),
-        NixHubHero(id: 118, name: "Joy", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 119, name: "Novaria", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 120, name: "Arlott", role: "Fighter/Assassin", lane: "EXP Lane"),
-        NixHubHero(id: 121, name: "Ixia", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 122, name: "Nolan", role: "Assassin", lane: "Jungle"),
-        NixHubHero(id: 123, name: "Cici", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 124, name: "Chip", role: "Support/Tank", lane: "Roaming"),
-        NixHubHero(id: 125, name: "Zhuxin", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 126, name: "Suyou", role: "Assassin/Fighter", lane: "Jungle/EXP Lane"),
-        NixHubHero(id: 127, name: "Lukas", role: "Fighter", lane: "EXP Lane"),
-        NixHubHero(id: 128, name: "Kalea", role: "Support/Fighter", lane: "Roaming"),
-        NixHubHero(id: 129, name: "Zetian", role: "Mage", lane: "Mid Lane"),
-        NixHubHero(id: 130, name: "Obsidia", role: "Marksman", lane: "Gold Lane"),
-        NixHubHero(id: 131, name: "Sora", role: "Fighter/Assassin", lane: "EXP Lane"),
-        NixHubHero(id: 132, name: "Marcel", role: "Support", lane: "Roaming"),
-        NixHubHero(id: 133, name: "Hiara", role: "Assassin", lane: "Jungle")
-    ]
 }
 
 // MARK: - Existing iOS document handling
