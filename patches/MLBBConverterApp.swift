@@ -1047,6 +1047,8 @@ private struct IshaScriptSkinCatalogView: View {
     @Environment(\.presentationMode) private var presentationMode
     @AppStorage("isha.catalog.download.history") private var historyJSON = "[]"
     @AppStorage("isha.catalog.skin.tag.assignments.v1") private var skinTagAssignmentsJSON = "{}"
+    @AppStorage("isha.gameLook.skinTags.enabled") private var gameLookSkinTagsEnabled = true
+    @AppStorage("isha.gameLook.skinTags.rules.v1") private var gameLookSkinTagRulesJSON = "[]"
 
     @State private var activeCatalogSheet: IshaCatalogSheet?
     @State private var heroes: [IshaCatalogHero] = []
@@ -1093,6 +1095,14 @@ private struct IshaScriptSkinCatalogView: View {
 
     private var tagLibrary: [IshaCatalogTag] {
         tagLibraryCache
+    }
+
+    private var gameLookSkinTagRules: [IshaSkinTagReplacementRule] {
+        guard let data = gameLookSkinTagRulesJSON.data(using: .utf8),
+              let rules = try? JSONDecoder().decode([IshaSkinTagReplacementRule].self, from: data) else {
+            return []
+        }
+        return rules
     }
 
     private var availableTags: [String] {
@@ -1218,6 +1228,7 @@ private struct IshaScriptSkinCatalogView: View {
 
                 let tags = skin.searchTags(heroName: hero.name, category: hero.category)
                     + assignedTagNames(for: skin)
+                    + visibleSkinTags(for: skin, heroName: hero.name, category: hero.category).map { $0.canonicalName }
                 if selectedTag != "All" &&
                     !tags.contains(where: { $0.caseInsensitiveCompare(selectedTag) == .orderedSame }) {
                     return false
@@ -1273,21 +1284,39 @@ private struct IshaScriptSkinCatalogView: View {
                   key != categoryKey,
                   key != skinNameKey,
                   !genericNames.contains(key),
-                  !genericNames.contains(identity),
-                  !result.contains(where: { $0.canonicalID == identity }) else { return }
+                  !genericNames.contains(identity) else { return }
 
             let rawIcon = rawTag.icon?.trimmingCharacters(in: .whitespacesAndNewlines)
             let canonicalIcon = canonical.icon?.trimmingCharacters(in: .whitespacesAndNewlines)
             let rawFile = rawTag.file?.trimmingCharacters(in: .whitespacesAndNewlines)
             let canonicalFile = canonical.file?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let resolved = IshaCatalogTag(
+            let original = IshaCatalogTag(
                 tagID: canonical.tagID ?? rawTag.tagID,
                 name: canonical.canonicalName,
                 icon: (rawIcon?.isEmpty == false) ? rawIcon : canonicalIcon,
                 file: (rawFile?.isEmpty == false) ? rawFile : canonicalFile,
                 description: rawTag.description ?? canonical.description
             )
-            result.append(resolved)
+
+            // Replace the source tag globally for every catalog skin carrying it.
+            let displayed: IshaCatalogTag
+            if gameLookSkinTagsEnabled,
+               let rule = gameLookSkinTagRules.first(where: { $0.sourceTagID == identity }),
+               !rule.displayTagID.isEmpty,
+               let replacement = tagByCanonicalIDCache[rule.displayTagID] {
+                displayed = IshaCatalogTag(
+                    tagID: replacement.tagID ?? replacement.canonicalID,
+                    name: replacement.canonicalName,
+                    icon: replacement.icon,
+                    file: replacement.file,
+                    description: replacement.description
+                )
+            } else {
+                displayed = original
+            }
+
+            guard !result.contains(where: { $0.canonicalID == displayed.canonicalID }) else { return }
+            result.append(displayed)
         }
 
         for tag in skin.tags ?? [] {
@@ -1375,6 +1404,8 @@ private struct IshaScriptSkinCatalogView: View {
         .onChange(of: selectedRole) { _ in rebuildVisibleGroups() }
         .onChange(of: selectedTag) { _ in rebuildVisibleGroups() }
         .onChange(of: featuredOnly) { _ in rebuildVisibleGroups() }
+        .onChange(of: gameLookSkinTagRulesJSON) { _ in rebuildVisibleGroups() }
+        .onChange(of: gameLookSkinTagsEnabled) { _ in rebuildVisibleGroups() }
         .onDisappear { searchDebounceTask?.cancel() }
         .alert("Download failed", isPresented: Binding(
             get: { errorMessage != nil && !heroes.isEmpty },
@@ -1415,6 +1446,8 @@ private struct IshaScriptSkinCatalogView: View {
                     skinName: target.skinName,
                     skinImage: target.skinImage
                 )
+            case .skinTagSettings:
+                IshaGameLookSkinTagsView(tags: tagLibrary)
             case .multiReplace:
                 IshaMultiReplaceLibraryView()
             case .share(let url):
@@ -1461,6 +1494,23 @@ private struct IshaScriptSkinCatalogView: View {
                 .padding(.horizontal, 9)
                 .frame(height: 38)
                 .background(ConverterPalette.green.opacity(0.10))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                activeCatalogSheet = .skinTagSettings
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "tag.fill")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("LOOK")
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                }
+                .foregroundColor(Color(red: 0.91, green: 0.70, blue: 0.34))
+                .padding(.horizontal, 9)
+                .frame(height: 38)
+                .background(Color(red: 0.91, green: 0.70, blue: 0.34).opacity(0.10))
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -2228,6 +2278,7 @@ private struct IshaCatalogTagEditTarget: Identifiable {
 private enum IshaCatalogSheet: Identifiable {
     case tagEditor(IshaCatalogTagEditTarget)
     case tagInfo(IshaCatalogTagInfoTarget)
+    case skinTagSettings
     case multiReplace
     case share(URL)
 
@@ -2235,10 +2286,44 @@ private enum IshaCatalogSheet: Identifiable {
         switch self {
         case .tagEditor(let target): return "tag-editor|\(target.id)"
         case .tagInfo(let target): return "tag-info|\(target.id)"
+        case .skinTagSettings: return "skin-tag-settings"
         case .multiReplace: return "multi-replace"
         case .share(let url): return "share|\(url.lastPathComponent)"
         }
     }
+}
+
+
+private struct IshaSkinTagReplacementRule: Codable, Identifiable, Equatable {
+    var id: String
+    var sourceTagID: String
+    var displayTagID: String
+    var gemColorID: String
+
+    init(sourceTagID: String = "", displayTagID: String = "", gemColorID: String = "auto") {
+        self.id = UUID().uuidString
+        self.sourceTagID = sourceTagID
+        self.displayTagID = displayTagID
+        self.gemColorID = gemColorID
+    }
+}
+
+private struct IshaSkinTagPickerTarget: Identifiable {
+    let ruleID: String
+    let slot: String
+    let title: String
+    var id: String { ruleID + "|" + slot }
+}
+
+private struct IshaGemPickerTarget: Identifiable {
+    let ruleID: String
+    var id: String { ruleID }
+}
+
+private struct IshaGemOption: Identifiable {
+    let id: String
+    let title: String
+    let color: Color
 }
 
 private struct IshaCatalogTagInfoTarget: Identifiable {
@@ -2423,6 +2508,601 @@ private struct IshaSkinTagInfoSheet: View {
                 .padding(16)
             }
             .navigationBarHidden(true)
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
+    }
+}
+
+
+private struct IshaGameLookSkinTagsView: View {
+    @Environment(\.presentationMode) private var presentationMode
+    @AppStorage("isha.gameLook.skinTags.enabled") private var isEnabled = true
+    @AppStorage("isha.gameLook.skinTags.rules.v1") private var savedRulesJSON = "[]"
+
+    let tags: [IshaCatalogTag]
+
+    @State private var rules: [IshaSkinTagReplacementRule] = []
+    @State private var pickerTarget: IshaSkinTagPickerTarget?
+    @State private var gemPickerTarget: IshaGemPickerTarget?
+    @State private var didLoadRules = false
+
+    private let gold = Color(red: 0.91, green: 0.70, blue: 0.34)
+
+    private var artworkTags: [IshaCatalogTag] {
+        tags.filter { tag in
+            guard let icon = tag.icon?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let url = URL(string: icon) else { return false }
+            return !icon.isEmpty && url.scheme?.lowercased() == "https"
+        }
+    }
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                ConverterPalette.background.ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    header
+
+                    ScrollView(showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 13) {
+                            Text("5 · SKIN TAGS (LOADING SCREEN)")
+                                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                                .tracking(0.35)
+                                .foregroundColor(ConverterPalette.muted)
+                                .padding(.horizontal, 3)
+                                .padding(.top, 14)
+
+                            VStack(alignment: .leading, spacing: 0) {
+                                HStack {
+                                    Text("Change skin tags")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(ConverterPalette.text)
+                                    Spacer()
+                                    Toggle("Change skin tags", isOn: $isEnabled)
+                                        .labelsHidden()
+                                        .tint(gold)
+                                }
+                                .padding(.horizontal, 15)
+                                .padding(.vertical, 14)
+
+                                Divider().overlay(.white.opacity(0.07))
+
+                                if isEnabled {
+                                    if rules.isEmpty {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text("No skin-tag replacements yet")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundColor(ConverterPalette.text)
+                                            Text("Choose an original tag, then choose the artwork and name you want to show for every skin carrying that tag.")
+                                                .font(.system(size: 10, weight: .medium))
+                                                .foregroundColor(ConverterPalette.muted)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(15)
+                                    }
+
+                                    ForEach(rules) { rule in
+                                        ruleCard(rule)
+                                    }
+
+                                    Button {
+                                        rules.append(IshaSkinTagReplacementRule())
+                                        persistRules()
+                                    } label: {
+                                        HStack(spacing: 9) {
+                                            Image(systemName: "plus.circle.fill")
+                                                .font(.system(size: 19, weight: .semibold))
+                                            Text("Add another tag")
+                                                .font(.system(size: 13, weight: .semibold))
+                                            Spacer()
+                                        }
+                                        .foregroundColor(gold)
+                                        .padding(.horizontal, 15)
+                                        .frame(minHeight: 48)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Text("A tag's picture and title are replaced for every skin that carries that tag. The gem follows the tag by default; choose a gem colour to override it.")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(ConverterPalette.muted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .padding(.horizontal, 15)
+                                        .padding(.bottom, 14)
+                                } else {
+                                    Text("Skin-tag replacements are turned off. Your saved rules will stay here.")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(ConverterPalette.muted)
+                                        .padding(15)
+                                }
+                            }
+                            .background(ConverterPalette.panel)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(.white.opacity(0.055), lineWidth: 1)
+                            )
+
+                            Text("Rules are saved on this iPhone and reflected in the ISHA skin catalog preview.")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(ConverterPalette.muted.opacity(0.85))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 3)
+                                .padding(.bottom, 28)
+                        }
+                        .padding(.horizontal, 14)
+                    }
+                }
+            }
+            .navigationBarHidden(true)
+            .preferredColorScheme(.dark)
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
+        .onAppear(perform: loadRules)
+        .sheet(item: $pickerTarget) { target in
+            IshaGameLookTagPickerView(
+                title: target.title,
+                tags: artworkTags,
+                onCancel: { pickerTarget = nil },
+                onSelect: { tag in
+                    updateRule(target.ruleID) { rule in
+                        if target.slot == "source" {
+                            rule.sourceTagID = tag.canonicalID
+                        } else {
+                            rule.displayTagID = tag.canonicalID
+                        }
+                    }
+                    pickerTarget = nil
+                }
+            )
+        }
+        .sheet(item: $gemPickerTarget) { target in
+            IshaGameLookGemPickerView(
+                selectedID: rules.first(where: { $0.id == target.ruleID })?.gemColorID ?? "auto",
+                onCancel: { gemPickerTarget = nil },
+                onSelect: { colorID in
+                    updateRule(target.ruleID) { $0.gemColorID = colorID }
+                    gemPickerTarget = nil
+                }
+            )
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Button("Done") {
+                presentationMode.wrappedValue.dismiss()
+            }
+            .font(.system(size: 16, weight: .medium))
+            .foregroundColor(ConverterPalette.blue)
+
+            Spacer()
+
+            Text("Game look")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(ConverterPalette.text)
+
+            Spacer()
+
+            Text("Done")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.clear)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 48)
+        .background(ConverterPalette.panel.opacity(0.96))
+    }
+
+    private func ruleCard(_ rule: IshaSkinTagReplacementRule) -> some View {
+        let source = findTag(rule.sourceTagID)
+        let display = findTag(rule.displayTagID)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("TAG REPLACEMENT")
+                    .font(.system(size: 8, weight: .heavy, design: .rounded))
+                    .tracking(0.65)
+                    .foregroundColor(gold)
+                Spacer()
+                Button {
+                    rules.removeAll { $0.id == rule.id }
+                    persistRules()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(ConverterPalette.muted)
+                        .frame(width: 30, height: 30)
+                        .background(ConverterPalette.field)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            pickerRow(caption: "Tag of my skin", selectedName: source.map(tagTitle) ?? "Choose",
+                      ruleID: rule.id, slot: "source", title: "Choose the tag")
+
+            pickerRow(caption: "Show it as", selectedName: display.map(tagTitle) ?? "Choose",
+                      ruleID: rule.id, slot: "display", title: "Show it as")
+
+            HStack(spacing: 8) {
+                previewCard(label: "BEFORE", tag: source, gemColorID: "auto")
+                    .frame(maxWidth: .infinity)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(gold)
+                    .frame(width: 18)
+                previewCard(label: "AFTER", tag: display, gemColorID: rule.gemColorID)
+                    .frame(maxWidth: .infinity)
+            }
+
+            Text(rule.gemColorID == "auto"
+                 ? "Gem: same colour, nothing to change."
+                 : "Gem: \(gemTitle(rule.gemColorID))")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(ConverterPalette.muted)
+
+            Button {
+                gemPickerTarget = IshaGemPickerTarget(ruleID: rule.id)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "diamond.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(gemColor(rule.gemColorID))
+                    Text("Pick the gem myself")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(ConverterPalette.text)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(gold)
+                }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(13)
+        .background(ConverterPalette.field.opacity(0.78))
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(gold.opacity(0.20), lineWidth: 1)
+        )
+        .padding(.horizontal, 10)
+        .padding(.top, 10)
+    }
+
+    private func pickerRow(
+        caption: String,
+        selectedName: String,
+        ruleID: String,
+        slot: String,
+        title: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(caption)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(ConverterPalette.muted)
+
+            Button {
+                pickerTarget = IshaSkinTagPickerTarget(ruleID: ruleID, slot: slot, title: title)
+            } label: {
+                HStack(spacing: 5) {
+                    Text("Choose the tag")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(ConverterPalette.text)
+                    Spacer(minLength: 4)
+                    Text(selectedName)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(gold)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(ConverterPalette.muted)
+                }
+                .frame(minHeight: 25)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func previewCard(label: String, tag: IshaCatalogTag?, gemColorID: String) -> some View {
+        VStack(spacing: 5) {
+            Text(label)
+                .font(.system(size: 7, weight: .heavy, design: .rounded))
+                .tracking(0.75)
+                .foregroundColor(ConverterPalette.muted)
+
+            if let tag {
+                IshaCatalogTagArtwork(tag: tag)
+                    .frame(height: 55)
+                    .padding(.horizontal, 5)
+            } else {
+                Text("Choose")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(ConverterPalette.muted)
+                    .frame(height: 55)
+            }
+
+            HStack(spacing: 4) {
+                Image(systemName: "diamond.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(gemColor(gemColorID))
+                Text(tag.map(tagTitle) ?? "Skin Tag")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(ConverterPalette.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity, minHeight: 22)
+        }
+        .padding(7)
+        .frame(minHeight: 112)
+        .background(Color.black.opacity(0.28))
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(gold.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private func findTag(_ id: String) -> IshaCatalogTag? {
+        guard !id.isEmpty else { return nil }
+        return tags.first(where: { $0.canonicalID == id })
+    }
+
+    private func tagTitle(_ tag: IshaCatalogTag) -> String {
+        switch tag.canonicalID {
+        case "elite", "special", "epic", "legend", "limited":
+            return tag.canonicalName + " Skin"
+        case "starlight":
+            return "StarLight Skin"
+        case "annual-starlight":
+            return "Annual StarLight Skin"
+        case "valentine":
+            return "Valentine's Day Skin"
+        case "aspirants", "the-aspirants":
+            return "The Aspirants Series Skin"
+        default:
+            return tag.canonicalName
+        }
+    }
+
+    private func updateRule(_ id: String, change: (inout IshaSkinTagReplacementRule) -> Void) {
+        guard let index = rules.firstIndex(where: { $0.id == id }) else { return }
+        change(&rules[index])
+        persistRules()
+    }
+
+    private func loadRules() {
+        guard !didLoadRules else { return }
+        didLoadRules = true
+        if let data = savedRulesJSON.data(using: .utf8),
+           let stored = try? JSONDecoder().decode([IshaSkinTagReplacementRule].self, from: data) {
+            rules = stored
+        } else {
+            rules = []
+        }
+    }
+
+    private func persistRules() {
+        guard let data = try? JSONEncoder().encode(rules),
+              let json = String(data: data, encoding: .utf8) else { return }
+        savedRulesJSON = json
+    }
+
+    private func gemTitle(_ id: String) -> String {
+        switch id {
+        case "gold": return "Gold"
+        case "red": return "Red"
+        case "blue": return "Blue"
+        case "green": return "Green"
+        case "purple": return "Purple"
+        case "cyan": return "Cyan"
+        case "white": return "White"
+        case "orange": return "Orange"
+        default: return "Same colour"
+        }
+    }
+
+    private func gemColor(_ id: String) -> Color {
+        switch id {
+        case "gold": return Color(red: 1.0, green: 0.72, blue: 0.22)
+        case "red": return Color(red: 0.96, green: 0.28, blue: 0.30)
+        case "blue": return Color(red: 0.26, green: 0.62, blue: 1.0)
+        case "green": return Color(red: 0.25, green: 0.86, blue: 0.55)
+        case "purple": return Color(red: 0.72, green: 0.42, blue: 1.0)
+        case "cyan": return Color(red: 0.25, green: 0.88, blue: 0.92)
+        case "white": return Color(red: 0.90, green: 0.94, blue: 1.0)
+        case "orange": return Color(red: 1.0, green: 0.48, blue: 0.16)
+        default: return gold
+        }
+    }
+}
+
+private struct IshaGameLookTagPickerView: View {
+    let title: String
+    let tags: [IshaCatalogTag]
+    let onCancel: () -> Void
+    let onSelect: (IshaCatalogTag) -> Void
+
+    @State private var searchText = ""
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8)
+    ]
+
+    private var filteredTags: [IshaCatalogTag] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return tags }
+        return tags.filter { $0.canonicalName.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                ConverterPalette.background.ignoresSafeArea()
+
+                VStack(spacing: 10) {
+                    HStack {
+                        Button("Cancel", action: onCancel)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(ConverterPalette.blue)
+                        Spacer()
+                        Text(title)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(ConverterPalette.text)
+                        Spacer()
+                        Color.clear.frame(width: 48)
+                    }
+                    .padding(.horizontal, 13)
+                    .frame(height: 42)
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(ConverterPalette.muted)
+                        TextField("Search", text: $searchText)
+                            .font(.system(size: 13))
+                            .foregroundColor(ConverterPalette.text)
+                            .autocorrectionDisabled()
+                        if !searchText.isEmpty {
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(ConverterPalette.muted)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 39)
+                    .background(ConverterPalette.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.horizontal, 13)
+
+                    ScrollView(showsIndicators: false) {
+                        LazyVGrid(columns: columns, spacing: 9) {
+                            ForEach(filteredTags) { tag in
+                                Button {
+                                    onSelect(tag)
+                                } label: {
+                                    VStack(spacing: 6) {
+                                        IshaCatalogTagArtwork(tag: tag)
+                                            .frame(height: 67)
+                                            .padding(.horizontal, 5)
+                                            .padding(.top, 7)
+                                        Text(tag.canonicalName)
+                                            .font(.system(size: 9, weight: .semibold))
+                                            .foregroundColor(ConverterPalette.text)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.center)
+                                            .frame(maxWidth: .infinity, minHeight: 24, alignment: .top)
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: 103)
+                                    .background(Color.black.opacity(0.32))
+                                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                            .stroke(.white.opacity(0.09), lineWidth: 1)
+                                    )
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 13)
+                        .padding(.bottom, 22)
+                    }
+                }
+            }
+            .navigationBarHidden(true)
+            .preferredColorScheme(.dark)
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
+    }
+}
+
+private struct IshaGameLookGemPickerView: View {
+    let selectedID: String
+    let onCancel: () -> Void
+    let onSelect: (String) -> Void
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 9),
+        GridItem(.flexible(), spacing: 9),
+        GridItem(.flexible(), spacing: 9)
+    ]
+
+    private let options: [IshaGemOption] = [
+        IshaGemOption(id: "auto", title: "Same colour", color: Color(red: 0.91, green: 0.70, blue: 0.34)),
+        IshaGemOption(id: "gold", title: "Gold", color: Color(red: 1.0, green: 0.72, blue: 0.22)),
+        IshaGemOption(id: "red", title: "Red", color: Color(red: 0.96, green: 0.28, blue: 0.30)),
+        IshaGemOption(id: "blue", title: "Blue", color: Color(red: 0.26, green: 0.62, blue: 1.0)),
+        IshaGemOption(id: "green", title: "Green", color: Color(red: 0.25, green: 0.86, blue: 0.55)),
+        IshaGemOption(id: "purple", title: "Purple", color: Color(red: 0.72, green: 0.42, blue: 1.0)),
+        IshaGemOption(id: "cyan", title: "Cyan", color: Color(red: 0.25, green: 0.88, blue: 0.92)),
+        IshaGemOption(id: "white", title: "White", color: Color(red: 0.90, green: 0.94, blue: 1.0)),
+        IshaGemOption(id: "orange", title: "Orange", color: Color(red: 1.0, green: 0.48, blue: 0.16))
+    ]
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                ConverterPalette.background.ignoresSafeArea()
+                VStack(spacing: 12) {
+                    HStack {
+                        Button("Cancel", action: onCancel)
+                            .foregroundColor(ConverterPalette.blue)
+                        Spacer()
+                        Text("Pick the gem")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(ConverterPalette.text)
+                        Spacer()
+                        Color.clear.frame(width: 48)
+                    }
+                    .font(.system(size: 15, weight: .medium))
+                    .padding(.horizontal, 14)
+                    .frame(height: 42)
+
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(options) { option in
+                            Button {
+                                onSelect(option.id)
+                            } label: {
+                                VStack(spacing: 8) {
+                                    Image(systemName: option.id == "auto" ? "arrow.triangle.2.circlepath" : "diamond.fill")
+                                        .font(.system(size: 22, weight: .semibold))
+                                        .foregroundColor(option.color)
+                                    Text(option.title)
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(ConverterPalette.text)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 82)
+                                .background(ConverterPalette.panel)
+                                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                        .stroke(selectedID == option.id ? option.color : .white.opacity(0.08), lineWidth: selectedID == option.id ? 1.7 : 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    Spacer()
+                }
+            }
+            .navigationBarHidden(true)
+            .preferredColorScheme(.dark)
         }
         .navigationViewStyle(StackNavigationViewStyle())
     }
