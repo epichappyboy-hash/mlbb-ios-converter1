@@ -509,6 +509,7 @@ struct ConverterView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         header
+                        scriptSkinCatalogEntry
                         pathsPanel
                         optionsPanel
                         convertButton
@@ -588,6 +589,40 @@ struct ConverterView: View {
         }
         .padding(.bottom, 2)
         .accessibilityElement(children: .combine)
+    }
+
+    private var scriptSkinCatalogEntry: some View {
+        NavigationLink(destination: IshaScriptSkinCatalogView()) {
+            HStack(spacing: 12) {
+                Image(systemName: "square.and.arrow.down.fill")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(ConverterPalette.green)
+                    .frame(width: 42, height: 42)
+                    .background(ConverterPalette.field)
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("SCRIPT SKIN DOWNLOADS")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(ConverterPalette.text)
+                    Text("Browse and download hero skin archives")
+                        .font(.system(size: 11))
+                        .foregroundColor(ConverterPalette.muted)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(ConverterPalette.muted)
+            }
+            .padding(14)
+            .background(ConverterPalette.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(ConverterPalette.green.opacity(0.28), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var pathsPanel: some View {
@@ -1002,5 +1037,467 @@ private struct AssetDocumentPicker: UIViewControllerRepresentable {
             guard let url = urls.first else { return }
             onPick(url)
         }
+    }
+}
+
+
+// MARK: - ISHA Script Skin Catalog
+// Download-only screen. It does not call or modify the Unity converter.
+private struct IshaScriptSkinCatalogView: View {
+    @Environment(\.presentationMode) private var presentationMode
+    @AppStorage("isha.catalog.download.history") private var historyJSON = "[]"
+    @State private var heroes: [IshaCatalogHero] = []
+    @State private var isLoading = false
+    @State private var searchText = ""
+    @State private var selectedCategory = "All"
+    @State private var downloadingIDs: Set<String> = []
+    @State private var shareURL: URL?
+    @State private var showShareSheet = false
+    @State private var errorMessage: String?
+    @State private var statusMessage: String?
+
+    private let catalogURL = URL(string: "https://raw.githubusercontent.com/missnapokita/masterkiter/refs/heads/main/skins.json")!
+
+    private var categories: [String] {
+        let values = Set(heroes.compactMap { $0.category?.capitalized })
+        return ["All"] + values.sorted()
+    }
+
+    private var recentDownloads: [String] {
+        guard let data = historyJSON.data(using: .utf8),
+              let values = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return values
+    }
+
+    private var downloadableCount: Int {
+        heroes.reduce(0) { total, hero in
+            guard hero.enabled != false else { return total }
+            return total + hero.skins.filter { $0.enabled != false && validDownloadURL($0.script) }.count
+        }
+    }
+
+    private var visibleGroups: [IshaCatalogHeroGroup] {
+        heroes.compactMap { hero in
+            guard hero.enabled != false else { return nil }
+            if selectedCategory != "All",
+               hero.category?.caseInsensitiveCompare(selectedCategory) != .orderedSame {
+                return nil
+            }
+
+            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let matchingSkins = hero.skins.filter { skin in
+                guard skin.enabled != false, validDownloadURL(skin.script) else { return false }
+                guard !query.isEmpty else { return true }
+                return hero.name.localizedCaseInsensitiveContains(query)
+                    || (skin.skin_name ?? "").localizedCaseInsensitiveContains(query)
+                    || (skin.tags ?? []).contains { $0.name.localizedCaseInsensitiveContains(query) }
+            }
+            guard !matchingSkins.isEmpty else { return nil }
+            return IshaCatalogHeroGroup(hero: hero, skins: matchingSkins)
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            ConverterPalette.background.ignoresSafeArea()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    topBar
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("SCRIPT SKIN DOWNLOADS")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .tracking(1.1)
+                            .foregroundColor(ConverterPalette.muted)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(downloadableCount)")
+                                .font(.system(size: 30, weight: .bold, design: .rounded))
+                                .foregroundColor(ConverterPalette.text)
+                            Text("downloadable items")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(ConverterPalette.muted)
+                            Spacer()
+                            Button {
+                                Task { await loadCatalog() }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(ConverterPalette.blue)
+                                    .frame(width: 38, height: 38)
+                                    .background(ConverterPalette.field)
+                                    .clipShape(Circle())
+                            }
+                            .disabled(isLoading)
+                        }
+                        Picker("Role", selection: $selectedCategory) {
+                            ForEach(categories, id: \.self) { category in
+                                Text(category).tag(category)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(ConverterPalette.blue)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(16)
+                    .background(ConverterPalette.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                    if !recentDownloads.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("RECENT DOWNLOADS")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .tracking(1)
+                                .foregroundColor(ConverterPalette.muted)
+                            ForEach(Array(recentDownloads.prefix(5).enumerated()), id: \.offset) { _, name in
+                                HStack(spacing: 8) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(ConverterPalette.green)
+                                    Text(name)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(ConverterPalette.text)
+                                        .lineLimit(1)
+                                    Spacer()
+                                }
+                            }
+                        }
+                        .padding(14)
+                        .background(ConverterPalette.panel)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+
+                    if isLoading && heroes.isEmpty {
+                        HStack {
+                            Spacer()
+                            ProgressView("Loading script skins…")
+                                .tint(ConverterPalette.blue)
+                            Spacer()
+                        }
+                        .padding(.vertical, 30)
+                    } else if let errorMessage, heroes.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(errorMessage)
+                                .font(.system(size: 12))
+                                .foregroundColor(ConverterPalette.red)
+                            Button("Try Again") { Task { await loadCatalog() } }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        .padding(16)
+                        .background(ConverterPalette.panel)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    } else {
+                        ForEach(visibleGroups) { group in
+                            VStack(alignment: .leading, spacing: 9) {
+                                HStack(spacing: 7) {
+                                    Text(group.hero.name)
+                                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                                        .foregroundColor(ConverterPalette.text)
+                                    Text((group.hero.category ?? "").capitalized)
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(ConverterPalette.green)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(ConverterPalette.green.opacity(0.12))
+                                        .clipShape(Capsule())
+                                    Spacer()
+                                    Text("\(group.skins.count) skins")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(ConverterPalette.muted)
+                                }
+
+                                ForEach(group.skins) { skin in
+                                    skinRow(skin, heroName: group.hero.name)
+                                }
+                            }
+                            .padding(12)
+                            .background(ConverterPalette.panel)
+                            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+            }
+            .searchable(text: $searchText, prompt: "Search hero or skin")
+        }
+        .navigationBarHidden(true)
+        .preferredColorScheme(.dark)
+        .task {
+            if heroes.isEmpty { await loadCatalog() }
+        }
+        .alert("Download failed", isPresented: Binding(
+            get: { errorMessage != nil && !heroes.isEmpty },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "Unknown error")
+        }
+        .alert("ISHA Converter", isPresented: Binding(
+            get: { statusMessage != nil },
+            set: { if !$0 { statusMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { statusMessage = nil }
+        } message: {
+            Text(statusMessage ?? "")
+        }
+        .sheet(isPresented: $showShareSheet) {
+            if let shareURL {
+                ActivityView(activityItems: [shareURL])
+            }
+        }
+    }
+
+    private var topBar: some View {
+        HStack {
+            Button {
+                presentationMode.wrappedValue.dismiss()
+            } label: {
+                Label("BACK", systemImage: "chevron.left")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(ConverterPalette.text)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(ConverterPalette.panel)
+                    .clipShape(Capsule())
+            }
+            Spacer()
+            Text("ISHA CONVERTER")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .tracking(1)
+                .foregroundColor(ConverterPalette.muted)
+        }
+    }
+
+    @ViewBuilder
+    private func skinRow(_ skin: IshaCatalogSkin, heroName: String) -> some View {
+        HStack(spacing: 10) {
+            IshaCatalogRemoteImage(urlString: skin.image)
+                .frame(width: 52, height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(skin.skin_name ?? "Custom Skin")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(ConverterPalette.text)
+                    .lineLimit(2)
+                if skin.featured == true {
+                    Text("FEATURED")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(ConverterPalette.green)
+                }
+                if let tags = skin.tags, !tags.isEmpty {
+                    Text(tags.map(\.name).filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.system(size: 9))
+                        .foregroundColor(ConverterPalette.muted)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 2)
+
+            Button {
+                Task { await download(skin, heroName: heroName) }
+            } label: {
+                if downloadingIDs.contains(skin.stableID) {
+                    ProgressView()
+                        .tint(.white)
+                        .frame(width: 66, height: 34)
+                } else {
+                    Label("Download", systemImage: "arrow.down.to.line")
+                        .font(.system(size: 10, weight: .bold))
+                        .labelStyle(.titleOnly)
+                        .foregroundColor(.white)
+                        .frame(width: 66, height: 34)
+                        .background(ConverterPalette.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(downloadingIDs.contains(skin.stableID))
+        }
+        .padding(10)
+        .background(ConverterPalette.field)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @MainActor
+    private func loadCatalog() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            var request = URLRequest(url: catalogURL)
+            request.timeoutInterval = 30
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw IshaCatalogError.invalidResponse
+            }
+            let decoded = try JSONDecoder().decode(IshaCatalogResponse.self, from: data)
+            heroes = decoded.heroes
+            if downloadableCount == 0 {
+                throw IshaCatalogError.emptyCatalog
+            }
+            errorMessage = nil
+        } catch {
+            errorMessage = "Hindi ma-load ang script-skin catalog. Check internet connection and try again. (\(error.localizedDescription))"
+        }
+    }
+
+    @MainActor
+    private func download(_ skin: IshaCatalogSkin, heroName: String) async {
+        guard let address = skin.script,
+              let url = URL(string: address),
+              url.scheme?.lowercased() == "https" else {
+            errorMessage = "Invalid download link for this skin."
+            return
+        }
+
+        downloadingIDs.insert(skin.stableID)
+        defer { downloadingIDs.remove(skin.stableID) }
+
+        do {
+            let (temporaryURL, response) = try await URLSession.shared.download(from: url)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw IshaCatalogError.invalidResponse
+            }
+            let fileExtension = url.pathExtension.lowercased()
+            guard fileExtension == "zip" || fileExtension == "rar" else {
+                throw IshaCatalogError.unsupportedArchive
+            }
+            let attributes = try FileManager.default.attributesOfItem(atPath: temporaryURL.path)
+            let fileSize = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+            guard fileSize > 0, fileSize <= 2_000_000_000 else {
+                throw IshaCatalogError.invalidArchiveSize
+            }
+
+            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let downloadFolder = documents.appendingPathComponent("Script Skin Downloads", isDirectory: true)
+            try FileManager.default.createDirectory(at: downloadFolder, withIntermediateDirectories: true)
+
+            let cleanHero = safeFileName(heroName)
+            let cleanSkin = safeFileName(skin.skin_name ?? "Skin")
+            let destination = downloadFolder.appendingPathComponent("\(cleanHero) - \(cleanSkin).\(fileExtension)")
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.moveItem(at: temporaryURL, to: destination)
+
+            var history = recentDownloads
+            history.removeAll { $0 == destination.lastPathComponent }
+            history.insert(destination.lastPathComponent, at: 0)
+            if history.count > 20 { history = Array(history.prefix(20)) }
+            if let data = try? JSONEncoder().encode(history),
+               let text = String(data: data, encoding: .utf8) {
+                historyJSON = text
+            }
+
+            shareURL = destination
+            showShareSheet = true
+            statusMessage = "Na-save ang \(destination.lastPathComponent) sa Script Skin Downloads."
+        } catch {
+            errorMessage = "Hindi na-download ang \(skin.skin_name ?? "skin"). \(error.localizedDescription)"
+        }
+    }
+
+    private func validDownloadURL(_ value: String?) -> Bool {
+        guard let value, let url = URL(string: value) else { return false }
+        return url.scheme?.lowercased() == "https"
+    }
+
+    private func safeFileName(_ value: String) -> String {
+        let cleaned = value.replacingOccurrences(
+            of: "[^A-Za-z0-9._ -]",
+            with: "_",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "Skin" : cleaned
+    }
+}
+
+private struct IshaCatalogResponse: Decodable {
+    let heroes: [IshaCatalogHero]
+}
+
+private struct IshaCatalogHero: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let category: String?
+    let enabled: Bool?
+    let skins: [IshaCatalogSkin]
+}
+
+private struct IshaCatalogSkin: Decodable, Identifiable {
+    let skinID: String?
+    let skin_name: String?
+    let image: String?
+    let script: String?
+    let featured: Bool?
+    let enabled: Bool?
+    let tags: [IshaCatalogTag]?
+
+    enum CodingKeys: String, CodingKey {
+        case skinID = "id"
+        case skin_name, image, script, featured, enabled, tags
+    }
+
+    var stableID: String {
+        skinID ?? "\(skin_name ?? "skin")|\(script ?? "")"
+    }
+
+    var id: String { stableID }
+}
+
+private struct IshaCatalogTag: Decodable {
+    let name: String
+}
+
+private struct IshaCatalogHeroGroup: Identifiable {
+    let hero: IshaCatalogHero
+    let skins: [IshaCatalogSkin]
+    var id: String { hero.id }
+}
+
+private enum IshaCatalogError: LocalizedError {
+    case invalidResponse
+    case unsupportedArchive
+    case invalidArchiveSize
+    case emptyCatalog
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse: return "The catalog server returned an invalid response."
+        case .unsupportedArchive: return "Only ZIP and RAR skin archives are supported."
+        case .invalidArchiveSize: return "The downloaded archive is empty or exceeds the 2 GB safety limit."
+        case .emptyCatalog: return "The catalog contains no downloadable skins."
+        }
+    }
+}
+
+private struct IshaCatalogRemoteImage: View {
+    let urlString: String?
+
+    var body: some View {
+        AsyncImage(url: URL(string: urlString ?? "")) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFill()
+            case .failure, .empty:
+                Image(systemName: "person.crop.square")
+                    .resizable()
+                    .scaledToFit()
+                    .padding(10)
+                    .foregroundColor(ConverterPalette.muted)
+            @unknown default:
+                Color.secondary.opacity(0.12)
+            }
+        }
+        .background(ConverterPalette.field)
     }
 }
