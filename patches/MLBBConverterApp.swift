@@ -1792,22 +1792,22 @@ private struct IshaScriptSkinCatalogView: View {
                     .overlay(RoundedRectangle(cornerRadius: 11).stroke(.white.opacity(0.10), lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(alignment: .top, spacing: 5) {
-                        Text(skin.skin_name ?? "Custom Skin")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(ConverterPalette.text)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if skin.featured == true {
-                            Image(systemName: "star.fill")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundColor(ConverterPalette.green)
+                    HStack(alignment: .top, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(skin.skin_name ?? "Custom Skin")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(ConverterPalette.text)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if skin.featured == true {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(ConverterPalette.green)
+                            }
                         }
-                    }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                    if !skinTags.isEmpty {
-                        HStack {
-                            Spacer(minLength: 0)
+                        if !skinTags.isEmpty {
                             IshaSkinTagBadgeStack(tags: skinTags) { tag in
                                 activeCatalogSheet = .tagInfo(
                                     IshaCatalogTagInfoTarget(
@@ -1818,8 +1818,8 @@ private struct IshaScriptSkinCatalogView: View {
                                     )
                                 )
                             }
+                            .fixedSize(horizontal: true, vertical: false)
                         }
-                        .frame(maxWidth: .infinity, alignment: .trailing)
                     }
 
                     Text(heroName)
@@ -2304,35 +2304,48 @@ private struct IshaSkinTagBadgeStack: View {
     let onTap: (IshaCatalogTag) -> Void
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 3) {
+        VStack(alignment: .trailing, spacing: 4) {
             ForEach(tags) { tag in
                 Button {
                     onTap(tag)
                 } label: {
-                    ZStack {
-                        Capsule()
-                            .fill(Color.black.opacity(0.90))
-                        if let iconURL = tag.icon, !iconURL.isEmpty {
-                            IshaCatalogTagArtwork(tag: tag)
-                                .padding(.horizontal, 2)
-                                .padding(.vertical, 1)
-                        } else {
-                            Text(tag.displayName)
-                                .font(.system(size: 7, weight: .heavy, design: .rounded))
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.65)
-                                .padding(.horizontal, 4)
-                        }
+                    HStack(spacing: 6) {
+                        IshaCatalogTagArtwork(tag: tag)
+                            .frame(width: 48, height: 26)
+                            .clipped()
+
+                        Text(tag.displayName)
+                            .font(.system(size: 8, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.7)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(width: 51, height: 19)
-                    .overlay(Capsule().stroke(ConverterPalette.blue.opacity(0.55), lineWidth: 0.8))
+                    .padding(.horizontal, 7)
+                    .frame(width: 112, height: 42)
+                    .background(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.10, green: 0.16, blue: 0.27),
+                                Color(red: 0.04, green: 0.07, blue: 0.13)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(ConverterPalette.blue.opacity(0.72), lineWidth: 1))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("View \(tag.displayName) skin tag details")
+                .accessibilityLabel("Open \(tag.displayName) skin tag details")
+                .accessibilityHint("Shows the official skin tag artwork, title, and description")
+                .frame(width: 112, height: 44)
+                .contentShape(Capsule())
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -2385,7 +2398,7 @@ private struct IshaSkinTagInfoSheet: View {
 
                     HStack(spacing: 12) {
                         IshaCatalogTagArtwork(tag: tag)
-                            .frame(width: 138, height: 78)
+                            .frame(width: 156, height: 88)
                             .padding(7)
                             .background(ConverterPalette.field)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
