@@ -31,7 +31,7 @@ struct ConverterView: View {
                 Image(systemName: "arrow.left.arrow.right.square")
                     .font(.system(size: 46, weight: .medium))
                     .foregroundColor(.blue)
-                Text("MLBB iOS Converter")
+                Text("Isha Converter iOS")
                     .font(.title2.bold())
                 Text("Android Unity assets → iOS")
                     .foregroundColor(.secondary)
