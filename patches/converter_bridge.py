@@ -114,6 +114,91 @@ def _webdav_cache_root(path: Path) -> Path | None:
     return Path(*resolved.parts[: marker + 2])
 
 
+
+def _expand_multi_skin_archives(source_root, scratch_root, safe_extract_zip, log):
+    """Expand selected skin ZIPs into one input tree without silently overwriting files."""
+    import hashlib
+    import shutil
+    from pathlib import Path
+
+    source_root = Path(source_root)
+    scratch_root = Path(scratch_root)
+    scratch_root.mkdir(parents=True, exist_ok=True)
+
+    def digest(path: Path) -> str:
+        value = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                value.update(chunk)
+        return value.hexdigest()
+
+    processed = set()
+    extracted_count = 0
+    for depth in range(3):
+        archives = sorted(
+            path for path in source_root.rglob("*")
+            if path.is_file()
+            and path.suffix.lower() == ".zip"
+            and str(path.resolve()) not in processed
+        )
+        if not archives:
+            break
+
+        for index, archive in enumerate(archives, 1):
+            processed.add(str(archive.resolve()))
+            extracted_count += 1
+            extraction = scratch_root / f"pack_{extracted_count:04d}"
+            extraction.mkdir(parents=True, exist_ok=True)
+            log(f"Multi Replace: extracting {archive.name} ({extracted_count})")
+            safe_extract_zip(archive, extraction)
+
+            for item in sorted(extraction.rglob("*")):
+                relative = item.relative_to(extraction)
+                destination = source_root / relative
+                if item.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if destination.exists():
+                    if digest(item) == digest(destination):
+                        log(f"Multi Replace: skipped identical duplicate {relative.as_posix()}")
+                        continue
+                    raise RuntimeError(
+                        "Multi Replace conflict: two selected skin archives contain "
+                        f"different files at '{relative.as_posix()}'. Remove one of the "
+                        "conflicting replacements and try again."
+                    )
+                shutil.copy2(item, destination)
+            archive.unlink()
+
+    remaining = [
+        path for path in source_root.rglob("*")
+        if path.is_file() and path.suffix.lower() == ".zip"
+    ]
+    if remaining:
+        raise RuntimeError(
+            "Multi Replace contains nested ZIP archives deeper than the supported "
+            "three levels: " + ", ".join(path.name for path in remaining[:5])
+        )
+    if extracted_count == 0:
+        raise RuntimeError("Multi Replace batch is empty: no skin ZIP archives were found.")
+
+    # Remove empty archive folders, but never remove the batch root.
+    for folder in sorted(
+        (path for path in source_root.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    ):
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
+
+    log(f"Multi Replace: expanded {extracted_count} archive(s) into a shared skin tree.")
+    return extracted_count
+
+
 def run_conversion(input_path: str, shader_path: str, output_path: str, display_name: str) -> str:
     # Keep module import lightweight; load the standard-library stack only when conversion starts.
     import io
@@ -122,11 +207,13 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
     import shutil
     import traceback
     import zipfile
+    import tempfile
     from contextlib import redirect_stderr, redirect_stdout
     from pathlib import Path
     logs, capture = [], _BoundedCapture()
     output_dir = output_zip = None
     converter = report = None
+    prepared_temp = None
     try:
         parent = Path(output_path)
         parent.mkdir(parents=True, exist_ok=True)
@@ -139,7 +226,7 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
             _diagnostic(parent, f"shader-folder setup warning: {type(shader_exc).__name__}: {shader_exc}")
         with redirect_stdout(capture), redirect_stderr(capture):
             _diagnostic(parent, "importing mlbb_ios_converter / UnityPy")
-            from mlbb_ios_converter import Converter, ConvertOptions
+            from mlbb_ios_converter import Converter, ConvertOptions, prepare_input, safe_extract_zip
             _diagnostic(parent, "mlbb_ios_converter / UnityPy imported")
             _diagnostic(parent, "importing texture decoder dependencies")
             import texture2ddecoder
@@ -222,8 +309,26 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
                         return
                     return super()._validate_all()
 
+            _diagnostic(parent, "preparing input archive/folder")
+            prepared_temp = tempfile.TemporaryDirectory(prefix="isha_converter_input_")
+            prepared_root = prepare_input(
+                Path(input_path),
+                Path(prepared_temp.name),
+                lambda message: _diagnostic(parent, message),
+            )
+            multi_marker = prepared_root / ".isha_multi_replace_manifest.json"
+            if multi_marker.is_file():
+                _expand_multi_skin_archives(
+                    prepared_root,
+                    Path(prepared_temp.name) / "multi_replace_extracts",
+                    safe_extract_zip,
+                    lambda message: _diagnostic(parent, message),
+                )
+                multi_marker.unlink(missing_ok=True)
+            _diagnostic(parent, f"prepared input root: {prepared_root}")
+
             _diagnostic(parent, "creating converter")
-            converter = _SpaceSavingConverter(Path(input_path), Path(shader_path), parent,
+            converter = _SpaceSavingConverter(Path(prepared_root), Path(shader_path), parent,
                 ConvertOptions(create_zip=True, full_validation=False, strict_matching=True, preserve_shadows=True),
                 logger=logs.append,
                 progress=lambda value, message: logs.append(f"[{value:.0f}%] {message}"))
@@ -255,6 +360,11 @@ def run_conversion(input_path: str, shader_path: str, output_path: str, display_
         _diagnostic(output_path, traceback.format_exc(limit=12))
         return json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}", "logs": logs[-120:]})
     finally:
+        if prepared_temp is not None:
+            try:
+                prepared_temp.cleanup()
+            except Exception:
+                pass
         # UnityPy/Pillow keep sizable object graphs alive during bundle conversion.
         # Drop the converter/report references before collecting so a later
         # conversion doesn't inherit memory pressure from the previous one.
