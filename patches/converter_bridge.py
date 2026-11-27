@@ -142,7 +142,13 @@ def _expand_multi_skin_archives(archive_root, scratch_root, log):
         root = destination.resolve()
         destination.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(archive_path, "r") as archive:
-            for info in archive.infolist():
+            infos = archive.infolist()
+            archive_uncompressed_size = sum(info.file_size for info in infos if not info.is_dir())
+            if total_uncompressed_bytes + archive_uncompressed_size > max_uncompressed_bytes:
+                raise RuntimeError(
+                    f"Skin archive '{archive_path.name}' expands beyond the 4 GB Multi Replace limit."
+                )
+            for info in infos:
                 normalized = info.filename.replace("\\", "/")
                 relative = PurePosixPath(normalized)
                 if (
