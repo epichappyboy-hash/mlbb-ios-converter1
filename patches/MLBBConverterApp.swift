@@ -1042,7 +1042,7 @@ private struct AssetDocumentPicker: UIViewControllerRepresentable {
 
 
 // MARK: - ISHA Script Skin Catalog
-// Independent download browser. It never invokes the converter engine.
+// Script skin catalog; saved archives are passed through the existing iOS converter.
 private struct IshaScriptSkinCatalogView: View {
     @Environment(\.presentationMode) private var presentationMode
     @AppStorage("isha.catalog.download.history") private var historyJSON = "[]"
@@ -1050,6 +1050,13 @@ private struct IshaScriptSkinCatalogView: View {
 
     @State private var tagEditingTarget: IshaCatalogTagEditTarget?
     @State private var heroes: [IshaCatalogHero] = []
+    @State private var tagLibraryCache: [IshaCatalogTag] = []
+    @State private var tagByIDCache: [String: IshaCatalogTag] = [:]
+    @State private var assignmentsCache: [String: [String]] = [:]
+    @State private var availableTagsCache: [String] = ["All"]
+    @State private var visibleGroupsCache: [IshaCatalogHeroGroup] = []
+    @State private var appliedSearchText = ""
+    @State private var searchDebounceTask: Task<Void, Never>?
     @State private var isLoading = false
     @State private var searchText = ""
     @State private var selectedRole = "All"
@@ -1086,11 +1093,36 @@ private struct IshaScriptSkinCatalogView: View {
     }
 
     private var tagLibrary: [IshaCatalogTag] {
-        let heroNames = Set(heroes.map { $0.name.lowercased() })
+        tagLibraryCache
+    }
+
+    private var availableTags: [String] {
+        availableTagsCache
+    }
+
+    private var visibleGroups: [IshaCatalogHeroGroup] {
+        visibleGroupsCache
+    }
+
+    private var visibleCount: Int {
+        visibleGroupsCache.reduce(0) { $0 + $1.skins.count }
+    }
+
+    private func selectedTagIDs(for skin: IshaCatalogSkin) -> Set<String> {
+        Set(assignmentsCache[skin.stableID] ?? [])
+    }
+
+    private func assignedTagNames(for skin: IshaCatalogSkin) -> [String] {
+        (assignmentsCache[skin.stableID] ?? []).compactMap { tagByIDCache[$0]?.name }
+    }
+
+    @MainActor
+    private func rebuildCatalogCaches(for catalog: [IshaCatalogHero]) {
+        let heroNames = Set(catalog.map { $0.name.lowercased() })
         let genericNames: Set<String> = ["assassin", "fighter", "mage", "marksman", "tank", "support", "basic", "backup"]
         var unique: [String: IshaCatalogTag] = [:]
 
-        for hero in heroes {
+        for hero in catalog {
             for skin in hero.skins {
                 for tag in skin.tags ?? [] {
                     let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1106,65 +1138,47 @@ private struct IshaScriptSkinCatalogView: View {
                 }
             }
         }
-        return unique.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        let library = unique.values.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        tagLibraryCache = library
+        tagByIDCache = Dictionary(uniqueKeysWithValues: library.map { ($0.stableID, $0) })
+
+        if let data = skinTagAssignmentsJSON.data(using: .utf8),
+           let saved = try? JSONDecoder().decode([String: [String]].self, from: data) {
+            assignmentsCache = saved
+        } else {
+            assignmentsCache = [:]
+        }
+
+        rebuildAvailableTags(for: catalog)
     }
 
-    private var availableTags: [String] {
-        let values = heroes.flatMap { hero in
-            hero.skins.flatMap { skin in
-                skin.searchTags(heroName: hero.name, category: hero.category) + assignedTagNames(for: skin)
+    @MainActor
+    private func rebuildAvailableTags(for catalog: [IshaCatalogHero]? = nil) {
+        let source = catalog ?? heroes
+        var values = Set<String>()
+        for hero in source where hero.enabled != false {
+            for skin in hero.skins where skin.enabled != false {
+                for value in skin.searchTags(heroName: hero.name, category: hero.category) {
+                    values.insert(value)
+                }
+                for id in assignmentsCache[skin.stableID] ?? [] {
+                    if let name = tagByIDCache[id]?.name { values.insert(name) }
+                }
             }
         }
-        return ["All"] + Set(values + tagLibrary.map { $0.name })
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-    }
-
-    private var savedTagAssignments: [String: [String]] {
-        guard let data = skinTagAssignmentsJSON.data(using: .utf8),
-              let values = try? JSONDecoder().decode([String: [String]].self, from: data) else { return [:] }
-        return values
-    }
-
-    private func selectedTagIDs(for skin: IshaCatalogSkin) -> Set<String> {
-        Set(savedTagAssignments[skin.stableID] ?? [])
-    }
-
-    private func assignedTagNames(for skin: IshaCatalogSkin) -> [String] {
-        let selected = selectedTagIDs(for: skin)
-        return tagLibrary.filter { selected.contains($0.stableID) }.map { $0.name }
-    }
-
-    private func saveTagAssignments(_ ids: [String], for skin: IshaCatalogSkin) {
-        var values = savedTagAssignments
-        let cleaned = Array(Set(ids)).sorted()
-        if cleaned.isEmpty { values.removeValue(forKey: skin.stableID) }
-        else { values[skin.stableID] = cleaned }
-        if let data = try? JSONEncoder().encode(values),
-           let json = String(data: data, encoding: .utf8) {
-            skinTagAssignmentsJSON = json
+        for tag in tagLibraryCache { values.insert(tag.name) }
+        availableTagsCache = ["All"] + values.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
         }
     }
 
-    private func visibleSkinTags(for skin: IshaCatalogSkin, heroName: String, category: String?) -> [IshaCatalogTag] {
-        let heroKey = heroName.lowercased()
-        let categoryKey = (category ?? "").lowercased()
-        var result: [IshaCatalogTag] = []
-        for tag in skin.tags ?? [] {
-            let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty, name.lowercased() != heroKey, name.lowercased() != categoryKey,
-                  !result.contains(where: { $0.stableID == tag.stableID }) else { continue }
-            result.append(tag)
-        }
-        let selected = selectedTagIDs(for: skin)
-        for tag in tagLibrary where selected.contains(tag.stableID) {
-            if !result.contains(where: { $0.stableID == tag.stableID }) { result.insert(tag, at: 0) }
-        }
-        return result
-    }
-
-    private var visibleGroups: [IshaCatalogHeroGroup] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return heroes.compactMap { hero in
+    @MainActor
+    private func rebuildVisibleGroups() {
+        let query = appliedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        visibleGroupsCache = heroes.compactMap { hero in
             guard hero.enabled != false else { return nil }
             if selectedRole != "All",
                hero.category?.caseInsensitiveCompare(selectedRole) != .orderedSame {
@@ -1197,8 +1211,41 @@ private struct IshaScriptSkinCatalogView: View {
         }
     }
 
-    private var visibleCount: Int {
-        visibleGroups.reduce(0) { $0 + $1.skins.count }
+    @MainActor
+    private func saveTagAssignments(_ ids: [String], for skin: IshaCatalogSkin) {
+        var values = assignmentsCache
+        let cleaned = Array(Set(ids)).sorted()
+        if cleaned.isEmpty { values.removeValue(forKey: skin.stableID) }
+        else { values[skin.stableID] = cleaned }
+        assignmentsCache = values
+
+        if let data = try? JSONEncoder().encode(values),
+           let json = String(data: data, encoding: .utf8) {
+            skinTagAssignmentsJSON = json
+        }
+
+        rebuildAvailableTags()
+        rebuildVisibleGroups()
+    }
+
+    private func visibleSkinTags(for skin: IshaCatalogSkin, heroName: String, category: String?) -> [IshaCatalogTag] {
+        let heroKey = heroName.lowercased()
+        let categoryKey = (category ?? "").lowercased()
+        var result: [IshaCatalogTag] = []
+
+        for tag in skin.tags ?? [] {
+            let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.lowercased() != heroKey, name.lowercased() != categoryKey,
+                  !result.contains(where: { $0.stableID == tag.stableID }) else { continue }
+            result.append(tag)
+        }
+
+        for tagID in assignmentsCache[skin.stableID] ?? [] {
+            guard let tag = tagByIDCache[tagID],
+                  !result.contains(where: { $0.stableID == tag.stableID }) else { continue }
+            result.insert(tag, at: 0)
+        }
+        return result
     }
 
     var body: some View {
@@ -1263,6 +1310,19 @@ private struct IshaScriptSkinCatalogView: View {
         .task {
             if heroes.isEmpty { await loadCatalog() }
         }
+        .onChange(of: searchText) { newValue in
+            searchDebounceTask?.cancel()
+            searchDebounceTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 220_000_000)
+                guard !Task.isCancelled else { return }
+                appliedSearchText = newValue
+                rebuildVisibleGroups()
+            }
+        }
+        .onChange(of: selectedRole) { _ in rebuildVisibleGroups() }
+        .onChange(of: selectedTag) { _ in rebuildVisibleGroups() }
+        .onChange(of: featuredOnly) { _ in rebuildVisibleGroups() }
+        .onDisappear { searchDebounceTask?.cancel() }
         .alert("Download failed", isPresented: Binding(
             get: { errorMessage != nil && !heroes.isEmpty },
             set: { if !$0 { errorMessage = nil } }
@@ -1590,9 +1650,11 @@ private struct IshaScriptSkinCatalogView: View {
                 .foregroundColor(ConverterPalette.muted)
             Button("Clear filters") {
                 searchText = ""
+                appliedSearchText = ""
                 selectedRole = "All"
                 selectedTag = "All"
                 featuredOnly = false
+                rebuildVisibleGroups()
             }
             .font(.system(size: 11, weight: .bold))
             .foregroundColor(ConverterPalette.blue)
@@ -1776,6 +1838,8 @@ private struct IshaScriptSkinCatalogView: View {
             let decoded = try JSONDecoder().decode(IshaCatalogResponse.self, from: data)
             guard !decoded.heroes.isEmpty else { throw IshaCatalogError.emptyCatalog }
             heroes = decoded.heroes
+            rebuildCatalogCaches(for: decoded.heroes)
+            rebuildVisibleGroups()
             errorMessage = nil
         } catch {
             errorMessage = "Hindi ma-load ang catalog. Check internet connection. (\(error.localizedDescription))"
@@ -1953,10 +2017,46 @@ private struct IshaCatalogTag: Decodable, Identifiable {
     let name: String
     let icon: String?
     let file: String?
+    let description: String?
 
     enum CodingKeys: String, CodingKey {
         case tagID = "id"
-        case name, icon, file
+        case name, icon, file, description
+    }
+
+    var infoTitle: String {
+        let normalized = (name + " " + (file ?? "")).lowercased()
+        if normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
+            return "10th Anniversary Skin"
+        }
+        if let supplied = description?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !supplied.isEmpty {
+            return name
+        }
+        return name.localizedCaseInsensitiveContains("skin") ? name : "\(name) Skin"
+    }
+
+    var infoDescription: String {
+        if let supplied = description?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !supplied.isEmpty {
+            return supplied
+        }
+        let normalized = (name + " " + (file ?? "")).lowercased()
+        if normalized.contains("10th anniversary") || normalized.contains("epic 10th") {
+            return "10th Anniversary-themed exclusive Epic skin."
+        }
+        switch stableID {
+        case "epic":
+            return "This badge identifies the skin as an Epic-tier skin."
+        case "collector":
+            return "This badge identifies the skin as part of the Collector series."
+        case "starlight":
+            return "This badge identifies the skin as part of the Starlight series."
+        case "annual-starlight":
+            return "This badge identifies the skin as part of the Annual Starlight series."
+        default:
+            return "This badge identifies the skin's \(name) category in the catalog."
+        }
     }
 
     var stableID: String {
@@ -2025,44 +2125,87 @@ private struct IshaCatalogRemoteImage: View {
 
 private struct IshaSkinTagBadgeStack: View {
     let tags: [IshaCatalogTag]
+    @State private var activeTagID: String?
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
-            ForEach(Array(tags.prefix(3))) { tag in
-                HStack(spacing: 3) {
-                    if let iconURL = tag.icon, !iconURL.isEmpty {
-                        IshaCatalogTagArtwork(iconURL: iconURL)
-                            .frame(width: 19, height: 19)
-                    } else {
-                        Image(systemName: "tag.fill")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(ConverterPalette.green)
-                            .frame(width: 19, height: 19)
+            ForEach(Array(tags.prefix(2))) { tag in
+                Button {
+                    activeTagID = tag.stableID
+                } label: {
+                    HStack(spacing: 3) {
+                        IshaCatalogTagArtwork(iconURL: tag.icon)
+                            .frame(width: 30, height: 19)
+                        Text(tag.name)
+                            .font(.system(size: 7, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                            .frame(maxWidth: 25, alignment: .leading)
                     }
-                    Text(tag.name)
-                        .font(.system(size: 7, weight: .heavy, design: .rounded))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                        .frame(maxWidth: 34, alignment: .leading)
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 2)
+                    .background(Color.black.opacity(0.86))
+                    .clipShape(Capsule())
                 }
-                .padding(.horizontal, 3)
-                .padding(.vertical, 2)
-                .background(Color.black.opacity(0.82))
-                .clipShape(Capsule())
+                .buttonStyle(.plain)
+                .popover(
+                    isPresented: Binding(
+                        get: { activeTagID == tag.stableID },
+                        set: { isPresented in
+                            if !isPresented && activeTagID == tag.stableID {
+                                activeTagID = nil
+                            }
+                        }
+                    ),
+                    arrowEdge: .top
+                ) {
+                    IshaSkinTagInfoCard(tag: tag)
+                }
             }
 
-            if tags.count > 3 {
-                Text("+\(tags.count - 3)")
+            if tags.count > 2 {
+                Text("+\(tags.count - 2)")
                     .font(.system(size: 7, weight: .heavy, design: .rounded))
                     .foregroundColor(.white)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 3)
-                    .background(Color.black.opacity(0.82))
+                    .background(Color.black.opacity(0.86))
                     .clipShape(Capsule())
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-        .allowsHitTesting(false)
+    }
+}
+
+private struct IshaSkinTagInfoCard: View {
+    let tag: IshaCatalogTag
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                IshaCatalogTagArtwork(iconURL: tag.icon)
+                    .frame(width: 112, height: 62)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(tag.infoTitle)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(tag.name.uppercased())
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                        .foregroundColor(ConverterPalette.blue)
+                }
+            }
+
+            Text(tag.infoDescription)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Color(red: 0.72, green: 0.79, blue: 0.88))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(15)
+        .frame(width: 292, alignment: .leading)
+        .background(Color(red: 0.035, green: 0.055, blue: 0.15))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
