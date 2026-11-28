@@ -34,7 +34,7 @@ jobs:
                       continue
                   if base.name == "Sources" and src.suffix != ".swift":
                       continue
-                  if base.name in {"UnityPy", "tpk_ar"} and src.suffix != ".py":
+                  if base.name in {"UnityPy", "tpk_ar"} and src.suffix != ".py" and src.name != "lzma.tpk":
                       continue
                   if base.name == "app" and src.suffix not in allowed:
                       continue
