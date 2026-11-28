@@ -26,7 +26,7 @@ jobs:
           out = Path("source_inspection")
           out.mkdir(exist_ok=True)
           allowed = {".swift", ".py", ".json", ".plist", ".toml", ".txt"}
-          for base in (root / "Sources", root / "app", root / "app_packages" / "UnityPy"):
+          for base in (root / "Sources", root / "app", root / "app_packages" / "UnityPy", root / "app_packages" / "tpk_ar") :
               if not base.exists():
                   continue
               for src in base.rglob("*"):
@@ -34,7 +34,7 @@ jobs:
                       continue
                   if base.name == "Sources" and src.suffix != ".swift":
                       continue
-                  if base.name == "UnityPy" and src.suffix != ".py":
+                  if base.name in {"UnityPy", "tpk_ar"} and src.suffix != ".py":
                       continue
                   if base.name == "app" and src.suffix not in allowed:
                       continue
