@@ -1,0 +1,39 @@
+name: Inspect converter source for asset mapping
+on:
+  push:
+    branches:
+      - inspect-asset-tag-mapping
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  inspect-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble project source
+        run: |
+          set -euo pipefail
+          cat MLBB_iOS_Converter_Project.zip.part* > MLBB_iOS_Converter_Project.zip
+          unzip -q MLBB_iOS_Converter_Project.zip -d reconstructed
+          test -d reconstructed/MLBB_iOS_Converter
+      - name: Collect only source files needed for asset mapping
+        run: |
+          set -euo pipefail
+          root="reconstructed/MLBB_iOS_Converter"
+          out="source_inspection"
+          mkdir -p "$out"
+          find "$root" -maxdepth 3 -type f \\( -path '*/Sources/*.swift' -o -path '*/Sources/*/*.swift' -o -path '*/app/*.py' -o -path '*/app/*.json' -o -path '*/app/data/*' -o -path '*/app_packages/UnityPy/*' -o -path '*/app_packages/UnityPy/*/*' \\) -print0 | while IFS= read -r -d '' file; do
+            mkdir -p "$out/$(dirname "${file#"$root"/}")"
+            cp "$file" "$out/${file#"$root"/}"
+          done
+          find "$root" -maxdepth 4 -type f -printf '%P\t%s bytes\n' | sort > "$out/source_inventory.txt"
+          grep -RniE 'run_conversion|converter_bridge|isha\.gameLook\.skinTags|SkinTagReplacementRule|Atlas_SkinCollectQuality|UI_SkinCardQuality' "$out" > "$out/relevant_matches.txt" || true
+          zip -qr source_inspection.zip "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Isha_Source_Inspection
+          path: source_inspection.zip
+          if-no-files-found: error
+          retention-days: 14
